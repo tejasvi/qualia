@@ -1,4 +1,5 @@
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Tuple, Union
 from time import time_ns
 from secrets import token_urlsafe
@@ -17,49 +18,78 @@ def get_time_uuid():
     left_padded_time = (time_ns() // 10 ** 6).to_bytes(6, "big")
     return urlsafe_b64encode(left_padded_time).decode() + token_urlsafe(10)
 
-
 get_node_id = get_time_uuid
 get_md_ast = Parser().parse
 
-changes = {}
-new_nodes = {}
-id_map = {}
-stored_hash = defaultdict(lambda: sha256(b''))
+@dataclass
+class State:
+    new_nodes: dict[str,list[str]] = {}
+    id_map: dict[str,str] = {}
+    stored_hash: dict[str,bytes] = defaultdict(lambda: sha256(b''))
+    changes: dict[str,list[str]] = {}
 
-list_regex = compile(" *[*+-] ")
-id_regex = compile("<!--(.+)--> {2}")
+state = State()
 
-CONFLICTS = "conflicts"
-
-#conflict = Differ().compare
-def conflict(new, node_id):
-    old = changes[node_id]
-    changes[CONFLICTS] += node_id
-    return new + ["\n<!-- CONFLICT -->\n"] + old
-
-
-def get_line_id(line: str) -> Tuple[Union[str, None], str]:
-    id_match = id_regex.match(line)
-    if id_match:
-        node_id = id_map[id_match.group(1)]
-        line = line.removeprefix(id_match.group(0))
-    else:
-        node_id = None
-    return node_id, line
-
-
-def process_node(node_id: Union[str, None], content: list[str]):
-    content_hash = sha256('\n'.join(content).encode()).digest()
-    if node_id:
-        if node_id in changes and stored_hash[node_id] != content_hash:
-            changes[node_id] = conflict(content, node_id)
+class Utils:
+    @staticmethod
+    def get_line_id(line: str) -> Tuple[Union[str, None], str]:
+        id_regex = compile("<!--(.+)--> {2}")
+        id_match = id_regex.match(line)
+        if id_match:
+            node_id = state.id_map[id_match.group(1)]
+            line = line.removeprefix(id_match.group(0))
         else:
-            changes[node_id] = content
-    else:
-        new_nodes[get_node_id()] = content
+            node_id = None
+        return node_id, line
 
+    @staticmethod
+    def process_node(node_id: Union[str, None], content: list[str]):
+        #conflict = Differ().compare
+        def conflict(new: list[str], node_id: str):
+            CONFLICTS = "conflicts"
+            old = state.changes[node_id]
+            state.changes[CONFLICTS] += node_id
+            return new + ["\n<!-- CONFLICT -->\n"] + old
 
-def process_text(lines):
+        content_hash = sha256('\n'.join(content).encode()).digest()
+        if node_id:
+            if node_id in state.changes and state.stored_hash[node_id] != content_hash:
+                state.changes[node_id] = conflict(content, node_id)
+            else:
+                state.changes[node_id] = content
+        else:
+            state.new_nodes[get_node_id()] = content
+
+def process_text(lines:list[str]):
+    get_line_id = Utils.get_line_id
+    process_node = Utils.process_node
+
+    def process_list_nodes(lines:list[str], list_nodes):
+        while list_nodes:
+            list_node, list_children = list_nodes.pop()
+            list_item_node = list_node.last_child
+            while list_item_node:
+                content_start_line_num = list_item_node.sourcepos[0][0] - 1
+                content_indent = list_item_node.sourcepos[0][1] + 1
+                node_id, id_line = get_line_id(lines[content_start_line_num][content_indent:])
+
+                list_item_node_children = list_children[node_id] = {}
+
+                if list_item_node.last_child.t == "list":
+                    content_end_line_num = list_item_node.last_child.source[0][0] - 1
+                    list_nodes.append((list_item_node.last_child, list_item_node_children))
+                else:
+                    content_end_line_num = list_item_node.sourcepos[1][0]
+
+                content_lines = ([id_line] if id_line else []) + [
+                    line.removeprefix(" " * content_indent)
+                    for line in lines[content_start_line_num + 1: content_end_line_num]
+                ]
+
+                process_node(node_id, content_lines)
+
+                list_item_node = list_item_node.prv
+
     md_ast = get_md_ast("\n".join(lines))
     assert md_ast.last_child is not None
 
@@ -81,31 +111,6 @@ def process_text(lines):
     return root_node_id, root_children
 
 
-def process_list_nodes(lines, list_nodes):
-    while list_nodes:
-        list_node, list_children = list_nodes.pop()
-        list_item_node = list_node.last_child
-        while list_item_node:
-            content_start_line_num = list_item_node.sourcepos[0][0] - 1
-            content_indent = list_item_node.sourcepos[0][1] + 1
-            node_id, id_line = get_line_id(lines[content_start_line_num][content_indent:])
-
-            list_item_node_children = list_children[node_id] = {}
-
-            if list_item_node.last_child.t == "list":
-                content_end_line_num = list_item_node.last_child.source[0][0] - 1
-                list_nodes.append((list_item_node.last_child, list_item_node_children))
-            else:
-                content_end_line_num = list_item_node.sourcepos[1][0]
-
-            content_lines = ([id_line] if id_line else []) + [
-                line.removeprefix(" " * content_indent)
-                for line in lines[content_start_line_num + 1: content_end_line_num]
-            ]
-
-            process_node(node_id, content_lines)
-
-            list_item_node = list_item_node.prv
 
 
 root = text_to_node(
