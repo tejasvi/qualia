@@ -236,51 +236,36 @@ class Utils:
 
 def process_text(lines: list[str]) -> View:
     md_ast = get_md_ast("\n".join(lines))
-    assert md_ast.last_child is not None
+    root_tree: dict[str,dict] = {}
+    list_nodes: list[tuple[Any, dict]] = [(md_ast, root_tree)]
+    while list_nodes:
+        cur_list_item_node, sub_tree = list_nodes.pop()
+        while cur_list_item_node:
+            content_start_line_num = cur_list_item_node.sourcepos[0][0] - 1
+            content_indent = cur_list_item_node.sourcepos[0][1] + 1
+            node_id, id_line = Utils.split_id_from_line(lines[content_start_line_num][content_indent:])
 
-    root_subtree = dict()
-    if md_ast.last_child.t == "list":  # The children
-        root_last_line_num = md_ast.last_child.sourcepos[0][0] - 1
-        assert md_ast.first_child != md_ast.last_child  # root node has some content
-        list_nodes: list[tuple[Any, dict]] = [(md_ast.last_child.first_child, root_subtree)]
-        while list_nodes:
-            list_node, list_children = list_nodes.pop()
-            cur_list_item_node = list_node.last_child
-            while cur_list_item_node:
-                content_start_line_num = cur_list_item_node.sourcepos[0][0] - 1
-                content_indent = cur_list_item_node.sourcepos[0][1] + 1
-                node_id, id_line = Utils.split_id_from_line(lines[content_start_line_num][content_indent:])
+            if node_id is None:
+                node_id = get_node_id()
+            list_item_node_children_ids = sub_tree[node_id] = {}
 
-                if node_id is None:
-                    node_id = get_node_id()
-                list_item_node_children_ids = list_children[node_id] = {}
+            if cur_list_item_node.last_child.t == "list":
+                content_end_line_num = cur_list_item_node.last_child.source[0][0] - 1
+                list_nodes.append((cur_list_item_node.last_child, list_item_node_children_ids))
+            else:
+                content_end_line_num = cur_list_item_node.sourcepos[1][0]
 
-                if cur_list_item_node.last_child.t == "list":
-                    content_end_line_num = cur_list_item_node.last_child.source[0][0] - 1
-                    list_nodes.append((cur_list_item_node.last_child, list_item_node_children_ids))
-                else:
-                    content_end_line_num = cur_list_item_node.sourcepos[1][0]
+            content_lines = ([id_line] if id_line else []) + [
+                line.removeprefix(" " * content_indent)
+                for line in lines[content_start_line_num + 1: content_end_line_num]
+            ]
 
-                content_lines = ([id_line] if id_line else []) + [
-                    line.removeprefix(" " * content_indent)
-                    for line in lines[content_start_line_num + 1: content_end_line_num]
-                ]
+            node = Node(node_id, content_lines, set(list_item_node_children_ids))
+            Utils.process_node(node)
 
-                node = Node(node_id, content_lines, set(list_item_node_children_ids))
-                Utils.process_node(node)
+            cur_list_item_node = cur_list_item_node.prv
 
-                cur_list_item_node = cur_list_item_node.prv
-    else:
-        root_last_line_num = None
-
-    root_node_id, root_id_line = Utils.split_id_from_line(lines[0])
-    assert root_node_id is not None
-    root_content_lines = lines[:root_last_line_num]
-    root_node = Node(root_node_id, root_content_lines, set(root_subtree))
-    Utils.process_node(root_node)
-
-    root_view: View = cast(View, (root_node_id, root_subtree))
-
+    root_view = cast(View, root_tree.popitem())
     return root_view
 
 
