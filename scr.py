@@ -1,13 +1,32 @@
+import shutil
+from base64 import urlsafe_b64encode
 from collections import defaultdict
-from dataclasses import dataclass
-from typing import Tuple, Union
-from time import time_ns
-from secrets import token_urlsafe
 # from difflib import Differ
+from dataclasses import dataclass
 from hashlib import sha256
+from json import dumps, loads
+from os import environ
 from re import compile
+from secrets import token_urlsafe
+from time import time_ns
+from typing import Tuple, Union, Callable, NewType, cast, Any, FrozenSet
+from uuid import uuid4
 
+import lmdb
 from commonmark import Parser
+from pynvim import attach
+
+DB_FILE = "test"
+
+shutil.rmtree("test", ignore_errors=True)
+
+CONFLICTS: str = "conflicts"
+
+NodeId = NewType("NodeId", str)
+BufferNodeId = NewType("BufferNodeId", str)
+ContentRev = NewType("ContentRev", str)
+ChildrenRev = NewType("ChildrenRev", str)
+View = NewType("View", tuple[NodeId, dict])
 
 
 def get_uuid():
@@ -18,102 +37,254 @@ def get_time_uuid():
     left_padded_time = (time_ns() // 10 ** 6).to_bytes(6, "big")
     return urlsafe_b64encode(left_padded_time).decode() + token_urlsafe(10)
 
-get_node_id = get_time_uuid
+
+get_node_id: Callable[[], NodeId] = get_time_uuid
 get_md_ast = Parser().parse
 
-@dataclass
-class State:
-    new_nodes: dict[str,list[str]] = {}
-    id_map: dict[str,str] = {}
-    stored_hash: dict[str,bytes] = defaultdict(lambda: sha256(b''))
-    changes: dict[str,list[str]] = {}
 
-state = State()
+@dataclass
+class Node:
+    node_id: NodeId
+    content_lines: list[str]
+    children_ids: set[NodeId]
+
+
+def sync(buffer_lines: list[str]):
+    root_view = process_text(buffer_lines)
+    save_nodes_to_db(cur_state.changed_nodes, root_view)
+
+
+LEVEL_SPACES = 4
+EXPANDED_BULLET = '* '
+COLLAPSED_BULLET = '+ '
+
+
+def content_lines_to_buffer_lines(content_lines: list[str], node_id: NodeId, level: int, expanded: bool) -> list[str]:
+    ledger.node_buffer_id_map[node_id] = buffer_id = cast(BufferNodeId, node_id)
+    space_count = LEVEL_SPACES * (level - 1) + 2
+    space_prefix = ' ' * space_count
+    buffer_lines = [
+        space_prefix[:-2] + f"{EXPANDED_BULLET if expanded else COLLAPSED_BULLET}<!-- {buffer_id} --> " + content_lines[
+            0]]
+    for idx, line in enumerate(content_lines[1:]):
+        buffer_lines.append(space_prefix + line)
+    return buffer_lines
+
+
+def render_buffer_lines(buffer_lines: list[str]):
+    nvim = attach('socket', path=environ['NVIM_LISTEN_ADDRESS'])
+    nvim.current.buffer[:] = buffer_lines
+
+
+def restore_view(view: View):
+    buffer_lines = get_buffer_lines_from_view(view)
+    render_buffer_lines(buffer_lines)
+
+
+def get_buffer_lines_from_view(view) -> list[str]:
+    with lmdb.open(DB_FILE) as env:
+        with env.begin() as txn:
+            content_cur = txn.cursor(env.open_db("content", txn))
+            children_cur = txn.cursor(env.open_db("children", txn))
+            get_content = lambda node_id: loads(content_cur.get(node_id.encode()))[0]
+            get_children = lambda node_id: loads(children_cur.get(node_id.encode()))[0]
+
+        buffer_lines = []
+        stack = [view + (0,)]
+        while stack:
+            node_id, sub_tree, level = stack.pop()
+            expanded = bool(sub_tree)
+            buffer_lines.extend(content_lines_to_buffer_lines(get_content(node_id), node_id, level, expanded))
+            if expanded:
+                children_ids = get_children(node_id)
+
+                new_children_ids = children_ids - sub_tree.keys()
+                for new_children_id in new_children_ids:
+                    stack.append((new_children_id, {}, level + 1))
+
+                sub_tree_children_ids = sub_tree.keys()
+                for child_id in reversed(sub_tree_children_ids & children_ids):
+                    stack.append((child_id, sub_tree[child_id], level + 1))
+
+        return buffer_lines
+
+
+def get_nodes(node_ids: list[NodeId]) -> list[tuple[Node, ContentRev, ChildrenRev]]:
+    nodes = []
+    with lmdb.open(DB_FILE) as env:
+        with env.begin() as txn:
+            content_cur = txn.cursor(env.open_db("content", create=False))
+            children_cur = txn.cursor(env.open_db("children", create=False))
+            for node_id in node_ids:
+                content_rev: ContentRev
+                content_lines, content_rev = loads(content_cur.get(node_id.encode()))
+                children_rev: ChildrenRev
+                children_ids, children_rev = loads(children_cur.get(node_id.encode()))
+                nodes.append((Node(node_id, content_lines, children_ids), content_rev, children_rev))
+    return nodes
+
+
+def save_nodes_to_db(changed_nodes: dict[NodeId, Node], root_view: tuple[NodeId, dict[str, dict]]):
+    with lmdb.open(DB_FILE) as env:
+        with env.begin(write=True) as txn:
+            content_cur = txn.cursor(env.open_db("content", txn))
+            children_cur = txn.cursor(env.open_db("children", txn))
+            for node_id, node in changed_nodes.items():
+                content_conflict = put_data_to_cursor(content_cur, node_id, node.content_lines, Utils.conflict)
+                if content_conflict:
+                    cur_state.content_conflict_node_ids.add(node_id)
+                children_conflict = put_data_to_cursor(children_cur, node_id, node.children_ids,
+                                                       lambda n, o: n.union(o))
+                if children_conflict:
+                    cur_state.children_conflict_node_ids.add(node_id)
+
+            views_cur = txn.cursor(env.open_db("views", txn))
+            if views_cur.last():
+                key_bytes = views_cur.key()
+                new_key = int.from_bytes(key_bytes, 'big') + 1
+            else:
+                new_key = 0
+            views_cur.put(new_key.to_bytes(new_key.bit_length(), 'big'), dumps(root_view))
+
+
+def put_data_to_cursor(db_cursor: lmdb.Cursor, node_id: NodeId, new_data: Any, conflict_resolver: Callable) -> bool:
+    did_conflict = False
+    db_node_data_json = db_cursor.get(node_id)
+    if db_node_data_json is None:
+        new_data_rev = 0
+    else:
+        db_node_data, db_data_rev = loads(db_node_data_json)
+        new_data_rev = db_data_rev + 1
+        if db_data_rev != ledger.last_node_content_rev[node_id]:
+            new_data = conflict_resolver(new_data, db_node_data)
+            did_conflict = True
+    db_cursor.put(node_id, dumps([new_data, new_data_rev]).encode())
+    return did_conflict
+
+
+@dataclass
+class Ledger:
+    # Created during each buffer writing event
+    last_node_children_set: dict[NodeId, FrozenSet[NodeId]]
+    last_node_content_rev: dict[NodeId, int]
+    last_node_children_rev: dict[NodeId, int]
+    buffer_node_id_map: dict[BufferNodeId, NodeId]
+    node_buffer_id_map: dict[NodeId, BufferNodeId]
+    last_node_content_hash: dict[NodeId, Union[bytes, None]]
+
+
+ledger = Ledger({}, {}, {}, {}, {}, defaultdict(lambda: None))
+
+
+class ProcessState:
+    def __init__(self):
+        self.changed_nodes: dict[NodeId, Node] = {}
+        self.content_conflict_node_ids: set[str] = set()
+        self.children_conflict_node_ids: set[str] = set()
+
+
+cur_state = ProcessState()
+
 
 class Utils:
+    def __init__(self):
+        pass
+
     @staticmethod
-    def get_line_id(line: str) -> Tuple[Union[str, None], str]:
+    def split_id_from_line(line: str) -> Tuple[Union[NodeId, None], str]:
         id_regex = compile("<!--(.+)--> {2}")
         id_match = id_regex.match(line)
         if id_match:
-            node_id = state.id_map[id_match.group(1)]
+            buffer_node_id = cast(BufferNodeId, id_match.group(1))
+            node_id = ledger.buffer_node_id_map[buffer_node_id]
             line = line.removeprefix(id_match.group(0))
         else:
             node_id = None
         return node_id, line
 
+    # conflict = Differ().compare
     @staticmethod
-    def process_node(node_id: Union[str, None], content: list[str]):
-        #conflict = Differ().compare
-        def conflict(new: list[str], node_id: str):
-            CONFLICTS = "conflicts"
-            old = state.changes[node_id]
-            state.changes[CONFLICTS] += node_id
-            return new + ["\n<!-- CONFLICT -->\n"] + old
+    def conflict(new_lines: list[str], old_lines: list[str]) -> list[str]:
+        return new_lines + ["\n<!-- CONFLICT -->\n"] + old_lines
 
-        content_hash = sha256('\n'.join(content).encode()).digest()
-        if node_id:
-            if node_id in state.changes and state.stored_hash[node_id] != content_hash:
-                state.changes[node_id] = conflict(content, node_id)
-            else:
-                state.changes[node_id] = content
+    @staticmethod
+    def process_node(node: Node):
+        content_lines = Node.content_lines
+        content_hash = sha256('\n'.join(content_lines).encode()).digest()
+        node_id = node.node_id
+        is_content_changed = ledger.last_node_content_hash[node_id] != content_hash
+
+        new_children = node.children_ids - ledger.last_node_children_set[node_id]
+
+        if not (is_content_changed or new_children):  # Assuming real-time update else check node_previously changed
+            return
+
+        node_previously_changed = node_id in cur_state.changed_nodes
+
+        if node_previously_changed:
+            if is_content_changed:
+                cur_state.changed_nodes[node_id].content_lines = Utils.conflict(content_lines,
+                                                                                cur_state.changed_nodes[
+                                                                                    node_id].content_lines)
+                cur_state.content_conflict_node_ids.add(node_id)
+            if new_children:
+                cur_state.changed_nodes[node_id].children_ids.update(new_children)
+                cur_state.children_conflict_node_ids.add(node_id)
         else:
-            state.new_nodes[get_node_id()] = content
+            cur_state.changed_nodes[node_id] = node
 
-def process_text(lines:list[str]):
-    get_line_id = Utils.get_line_id
-    process_node = Utils.process_node
 
-    def process_list_nodes(lines:list[str], list_nodes):
+def process_text(lines: list[str]) -> View:
+    md_ast = get_md_ast("\n".join(lines))
+    assert md_ast.last_child is not None
+
+    root_subtree = dict()
+    if md_ast.last_child.t == "list":  # The children
+        root_last_line_num = md_ast.last_child.sourcepos[0][0] - 1
+        assert md_ast.first_child != md_ast.last_child  # root node has some content
+        list_nodes: list[tuple[Any, dict]] = [(md_ast.last_child.first_child, root_subtree)]
         while list_nodes:
             list_node, list_children = list_nodes.pop()
-            list_item_node = list_node.last_child
-            while list_item_node:
-                content_start_line_num = list_item_node.sourcepos[0][0] - 1
-                content_indent = list_item_node.sourcepos[0][1] + 1
-                node_id, id_line = get_line_id(lines[content_start_line_num][content_indent:])
+            cur_list_item_node = list_node.last_child
+            while cur_list_item_node:
+                content_start_line_num = cur_list_item_node.sourcepos[0][0] - 1
+                content_indent = cur_list_item_node.sourcepos[0][1] + 1
+                node_id, id_line = Utils.split_id_from_line(lines[content_start_line_num][content_indent:])
 
-                list_item_node_children = list_children[node_id] = {}
+                if node_id is None:
+                    node_id = get_node_id()
+                list_item_node_children_ids = list_children[node_id] = {}
 
-                if list_item_node.last_child.t == "list":
-                    content_end_line_num = list_item_node.last_child.source[0][0] - 1
-                    list_nodes.append((list_item_node.last_child, list_item_node_children))
+                if cur_list_item_node.last_child.t == "list":
+                    content_end_line_num = cur_list_item_node.last_child.source[0][0] - 1
+                    list_nodes.append((cur_list_item_node.last_child, list_item_node_children_ids))
                 else:
-                    content_end_line_num = list_item_node.sourcepos[1][0]
+                    content_end_line_num = cur_list_item_node.sourcepos[1][0]
 
                 content_lines = ([id_line] if id_line else []) + [
                     line.removeprefix(" " * content_indent)
                     for line in lines[content_start_line_num + 1: content_end_line_num]
                 ]
 
-                process_node(node_id, content_lines)
+                node = Node(node_id, content_lines, set(list_item_node_children_ids))
+                Utils.process_node(node)
 
-                list_item_node = list_item_node.prv
-
-    md_ast = get_md_ast("\n".join(lines))
-    assert md_ast.last_child is not None
-
-    root_children = {}
-    if md_ast.last_child.t == "list":  # The children
-        root_last_line_num = md_ast.last_child.sourcepos[0][0] - 1
-        assert md_ast.first_child != md_ast.last_child  # root node has some content
-        list_nodes = [(md_ast.last_child.first_child, root_children)]
-        process_list_nodes(lines, list_nodes)
+                cur_list_item_node = cur_list_item_node.prv
     else:
         root_last_line_num = None
 
-    root_node_id, root_id_line = get_line_id(lines[0])
-    root_content_lines = lines[0 if root_id_line else 1:root_last_line_num]
-    if root_node_id is None:
-        raise
-    process_node(root_node_id, root_content_lines)
+    root_node_id, root_id_line = Utils.split_id_from_line(lines[0])
+    assert root_node_id is not None
+    root_content_lines = lines[:root_last_line_num]
+    root_node = Node(root_node_id, root_content_lines, set(root_subtree))
+    Utils.process_node(root_node)
 
-    return root_node_id, root_children
+    root_view: View = cast(View, (root_node_id, root_subtree))
+
+    return root_view
 
 
-
-
-root = text_to_node(
+root = process_text(
     """
 <!--1-->  Flat text line
 * Node 1
@@ -130,6 +301,7 @@ root = text_to_node(
 print(root)
 
 exit()
+"""
 import lmdb
 from lmdb.tool import dump_cursor_to_fp, restore_cursor_from_fp
 
@@ -284,7 +456,7 @@ def render_lines(data, nvim_buffer):
     nvim.current.buffer[:] = render_lines(data)
 
 
-nvim = attach("socket", path=r"\\.\pipe\nvim-15176-0")  # "/tmp/nvim")
+nvim = attach("socket", path=r"\\." "\\" r"pipe\nvim-15176-0")  # "/tmp/nvim")
 call = nvim.call
 
 exit()
@@ -300,6 +472,39 @@ mark_id = call("nvim_buf_set_extmark", 0, mark_ns, 0, 0, {})
 call("nvim_buf_get_extmark_by_id", 0, mark_ns, mark_id, {})
 call("nvim_buf_get_extmarks", 0, mark_ns, 0, -1, {})
 
-from ptpython import embed
+# from ptpython import embed
 
-embed(globals(), locals())
+# embed(globals(), locals())
+
+"""
+
+"""
+TODO:
+Max level limit
+While placing nodes on buffer, order by nodeID
+
+Buffer opened
+
+* Saving buffer changes
+* Loading a tree
+For each view create a new _file_ (store in tmp?) and vim will remember marks, jump locations etc for that file (in its cache location).
+After switching to different view, vim will reopen the last _view_ file when going back.
+How it will work for VS Code?
+
+Why content hash check with db is faulty?
+User changes a node in buffer. Before contents are synced
+    User uses a different instance, changes the node content equal to ledger node content in previous instance.
+    When previous instance is synced, nothing amiss is found and latest user changes are overwritten due to latest db write policy
+    To fix, ledger state has last seen version number of db and if during sync db gives larger number, the db content is newer and conflicts are handled 
+    accordingly (if the buffer has newer content as well).
+
+TextChanged: In normal mode and on leaving insert mode
+    Else sync every 5 seconds? if stayed in insert mode for long.
+When conflict with the children, create a link to the node from the _child conflict list_ node.
+    Can be done the same with content conflict.
+    
+Do something like React while refilling buffer.
+    Hash all lines in buffer and lines to be filled in buffer. Do minimal replacements to not disturb position too much
+    
+https://github.com/jacobsimpson/nvim-example-python-plugin
+"""
