@@ -1,0 +1,6 @@
+DB_FOLDER = "test"
+CONFLICTS: str = "conflicts"
+LEVEL_SPACES = 4
+EXPANDED_BULLET = '*'
+COLLAPSED_BULLET = '+'
+MIRROR_BULLET = '-'

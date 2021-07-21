@@ -1,0 +1,7 @@
+commonmark
+base65536
+lmdb
+pynvim
+black
+markdown-it-py[plugins]
+pycrunch-trace
