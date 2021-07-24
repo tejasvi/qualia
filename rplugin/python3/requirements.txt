@@ -5,3 +5,5 @@ pynvim
 black
 markdown-it-py[plugins]
 pycrunch-trace
+appdirs
+orderedset

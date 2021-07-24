@@ -1,17 +1,18 @@
 from difflib import SequenceMatcher
 from typing import cast
 
+from orderedset import OrderedSet
 from pynvim import Nvim
 from pynvim.api import Buffer
 
+from qualia import states
 from qualia.buffer import Process
-from qualia.models import NodeId, View, NodeData
-from qualia.states import ledger
-from qualia.utils import get_key_val, Cursors, batch_undo, content_lines_to_buffer_lines
+from qualia.models import NodeId, View, NodeData, Tree
+from qualia.utils import get_key_val, batch_undo, content_lines_to_buffer_lines
 
 
-def render(root_view: View, buffer: Buffer, nvim: Nvim, cursors: Cursors) -> None:
-    new_content_lines = get_buffer_lines_from_view(root_view, cursors)
+def render(root_view: View, buffer: Buffer, nvim: Nvim) -> None:
+    new_content_lines = get_buffer_lines_from_view(root_view)
     old_content_lines = list(buffer)
     undojoin = batch_undo(nvim)
 
@@ -24,7 +25,7 @@ def render(root_view: View, buffer: Buffer, nvim: Nvim, cursors: Cursors) -> Non
             min_lines = min(num_old_lines, num_new_lines)
             # setline preserves the marks unlike buffer[lnum] = "content"
             next(undojoin)
-            assert nvim.funcs.setline(min(old_i1, len(buffer)) + 1 + offset,
+            assert nvim.funcs.setline(min(old_i1 + offset, len(buffer)) + 1,
                                       new_content_lines[new_i1:new_i1 + min_lines]) == 0
             if num_new_lines > num_old_lines:
                 next(undojoin)
@@ -45,40 +46,53 @@ def render(root_view: View, buffer: Buffer, nvim: Nvim, cursors: Cursors) -> Non
 
     assert new_content_lines == list(buffer)
 
-    new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.root_id)
-    assert not new_changes
-    assert new_content_lines == get_buffer_lines_from_view(new_root_view, cursors)
+    try:
+        new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.root_id)
+        assert (not new_changes or (nvim.err_write(str(new_changes)) and False))
+        re_content_lines = get_buffer_lines_from_view(new_root_view)
+        assert (new_content_lines == re_content_lines) or (
+                nvim.err_write(str((new_content_lines, re_content_lines))) and False)
+    except Exception as exp:
+        for _ in range(100):
+            new_root_view, new_changes = Process().process_lines(old_content_lines.copy(), root_view.root_id)
+            new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.root_id)
+            re_content_lines = get_buffer_lines_from_view(new_root_view)
 
     # nvim.err_write(str((new_content_lines, old_content_lines)))
     print(new_content_lines, old_content_lines)
 
 
-def get_buffer_lines_from_view(view: View, cursors: Cursors) -> list[str]:
-    ledger.clear()
+def get_buffer_lines_from_view(view: View) -> list[str]:
+    states.ledger.clear()
     buffer_lines: list[str] = []
-    stack: list[tuple[NodeId, dict, int]] = [(view.root_id, view.sub_tree, 0)]
+    stack: list[tuple[NodeId, Tree, int, bool]] = [(view.root_id, {view.root_id: view.sub_tree}, -1, False)]
     while stack:
-        cur_node_id, sub_tree, level = stack.pop()
+        cur_node_id, context, previous_level, previously_ordered = stack.pop()
+        children_context = context[cur_node_id] if context and cur_node_id in context else None
 
-        content_lines = get_key_val(cur_node_id, cursors.content)
+        content_lines = get_key_val(cur_node_id, states.cursors.content)
         if content_lines is None:
             continue
 
-        children_id_list = get_key_val(cur_node_id, cursors.children)
-        children_ids = frozenset() if children_id_list is None else frozenset(cast(list[NodeId], children_id_list))
+        children_id_list = get_key_val(cur_node_id, states.cursors.children) or []
+        children_ids = OrderedSet(cast(list[NodeId], children_id_list))
 
-        expanded = not children_ids or sub_tree
+        expanded = not children_ids or (children_context is not None)
+
+        ordered = expanded and ((len(children_ids) == 1) or previously_ordered) and previous_level >= 0 and len(
+            context) == 1
+
+        current_level = previous_level if (ordered and previously_ordered) else previous_level + 1
+
         if expanded:
-            for child_node_id in sorted(children_ids, reverse=True):
-                stack.append(
-                    (child_node_id, sub_tree[child_node_id] if child_node_id in sub_tree else {}, level + 1))
+            for child_node_id in reversed(children_ids):  # sorted(children_ids, reverse=True):
+                stack.append((child_node_id, children_context, current_level, ordered))
 
-        buffer_id, node_buffer_lines = content_lines_to_buffer_lines(content_lines, cur_node_id, level,
-                                                                     expanded)
+        buffer_id, node_buffer_lines = content_lines_to_buffer_lines(content_lines, cur_node_id, current_level,
+                                                                     expanded, ordered)
         buffer_lines += node_buffer_lines
 
-        if cur_node_id not in ledger:
-            ledger[cur_node_id] = NodeData(content_lines, children_ids, buffer_id)
-            ledger.buffer_node_id_map[buffer_id] = cur_node_id
+        if cur_node_id not in states.ledger:
+            states.ledger[cur_node_id] = NodeData(content_lines, frozenset(children_ids))
 
-    return buffer_lines
+    return buffer_lines or ['']

@@ -1,14 +1,15 @@
 import shutil
 import traceback
+from collections import defaultdict
 from time import sleep
 from typing import Any
 
 from pynvim import plugin, Nvim, function, attach, autocmd
 
+from qualia import states
 from qualia.config import DB_FOLDER, LEVEL_SPACES
-from qualia.models import CloneException, DuplicateException, NodeId, BufferNodeId
+from qualia.models import DuplicateException, NodeId, BufferNodeId, Ledger, CloneChildrenException
 from qualia.render import render
-from qualia.states import ledger
 from qualia.sync import sync_buffer
 # from difflib import Differ
 from qualia.utils import Database
@@ -24,6 +25,9 @@ class Qualia:
         self._changedtick = None
         self._undo_seq = self.nvim.funcs.undotree()["seq_last"]
         self.autocmd = None
+        self.clone_ns = self.nvim.funcs.nvim_create_namespace("clones")
+        self.duplicate_ns = self.nvim.funcs.nvim_create_namespace("duplicates")
+        self.ledgers: dict[int, Ledger] = defaultdict(Ledger)
 
     def log(self, *args: Any):
         text = ' - '.join([str(text) for text in args])
@@ -32,7 +36,9 @@ class Qualia:
         else:
             print(text)
 
-    @autocmd("TextChanged,BufEnter,InsertLeavePre,BufLeave", pattern='*.q', sync=True, allow_nested=False, eval=None)
+    @autocmd("TextChanged,FocusGained,BufEnter,InsertLeavePre,BufLeave", pattern='*.q.md', sync=True,
+             allow_nested=False,
+             eval=None)
     def auto_main(self, *_args) -> None:
         self.autocmd = True
         try:
@@ -48,13 +54,18 @@ class Qualia:
             return
         self.main()
 
+    def delete_highlights(self, buffer_numer) -> None:
+        for ns_id in (self.clone_ns, self.duplicate_ns):
+            self.nvim.funcs.nvim_buf_clear_namespace(buffer_numer, ns_id, 0, -1)
+
     def main(self, *_args) -> None:
+        buffer = self.nvim.current.buffer
         undotree = self.nvim.funcs.undotree()
         if undotree["seq_cur"] < undotree["seq_last"]:
             self.log(("UNDO RET", undotree["synced"] == 0, undotree["seq_cur"] < undotree["seq_last"]))
             return
         if undotree["seq_cur"] - self._undo_seq > 1:
-            ledger.clear()
+            self.ledgers.pop(buffer.number)
         self._undo_seq = undotree["seq_cur"]
 
         # Undo changes changedtick to check that before
@@ -66,19 +77,25 @@ class Qualia:
 
         with Database() as cursors:
             # self.nvim.current.line = "Hello from your plugin!"
-            buffer = self.nvim.current.buffer
-            buffer_name = self.nvim.funcs.bufname()
-            if buffer_name not in ledger.buffer_node_id_map:
-                ledger.buffer_node_id_map[BufferNodeId(buffer_name)] = NodeId(buffer_name)
+            self.delete_highlights(buffer.number)
+            states.ledger = self.ledgers[buffer.number]
+            states.cursors = cursors
             try:
-                root_view = sync_buffer(buffer, cursors, buffer_name)
-                render(root_view, buffer, self.nvim, cursors)
-            except CloneException as clone_ex:
-                self.nvim.err_write(f"Unsynced clone, {clone_ex.node_id}, {clone_ex.loc_1} {clone_ex.loc_2}")
-                self.log(f"Unsynced clone, {clone_ex.node_id}, {clone_ex.loc_1} {clone_ex.loc_2}")
-            except DuplicateException as dup_ex:
-                self.nvim.err_write(f"Unsynced duplicate, {dup_ex.node_id}, {dup_ex.loc_1} {dup_ex.loc_2}")
-                self.log(f"Unsynced duplicate, {dup_ex.node_id}, {dup_ex.loc_1} {dup_ex.loc_2}")
+                root_view = sync_buffer(buffer)
+                render(root_view, buffer, self.nvim)
+                # write to filename with hex-encoded root ID
+                self.nvim.command("set write")
+            except DuplicateException as exp:
+                self.nvim.command("set nowrite")
+                self.log(f"Unsynced duplicate, {exp.node_id}, {exp.loc_1} {exp.loc_2}")
+                for node_locs in (exp.loc_1, exp.loc_2):
+                    for line_num in node_locs:
+                        self.nvim.funcs.nvim_buf_add_highlight(buffer.number, self.clone_ns, "ErrorMsg", line_num, 0,
+                                                               -1)
+            except CloneChildrenException as exp:
+                self.nvim.command("set nowrite")
+                self.log(f"Clone children, {exp.node_id}, {exp.loc}")
+                self.nvim.funcs.nvim_buf_add_highlight(buffer.number, self.clone_ns, "ErrorMsg", exp.loc, 0, -1)
             self.count += 1
 
     @function("TestFunction")
@@ -320,4 +337,16 @@ From directory containing vimrc with: let &runtimepath.=','.escape(expand('<sfil
     nvim -u vimrc and then UpdateRemotePlugins
     Then start nvim normally from anywhere and open file with .q extension
 For pycharm debugging, nvim --listen \\.\pipe\nvim-15600-0 filename
+For normal run, nvim -u vimrc and :UpdateRemotePlugins
+During render keep track of last number used for buffer id. To get new id, increment it by one convert to bytes and then into base65536
+Live cloud sync aggressively if other client is checked fetched content from cloud recently. Else delay the sync.
+    Each client DB has an ID
+    Each client on fetch will set its DB ID
+    The other client can decide the running average of sync delay by checking if some other client DB "checked" cloud for new updates recently based on last modification time
+Git syncing: top level directories with note ids as their name (hex encoded to be case agnostic).
+    Each directory contains README.md containing the content of that node
+    The contained symlinks to directories on root level are children.
+    The system is flexible to include arbitrary content in a node like attachments.
+        When there is single non child symlink it represents _the_ content of the node.
+subprocess.Popen to trigger backup/git sync in independant process
 """

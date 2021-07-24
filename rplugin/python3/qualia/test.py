@@ -6,15 +6,16 @@ print(tasklists)
 
 from qualia.models import NodeId
 
-k = '\n'.join(['alskjf', 'klj', '* [](q://AXrIYpjeBYGLc41OlkaA6g)  f', '    + [](q://AXrIYpjeBYGLc41OlkaA6g)  f',
-               '    * [](q://AXrIYvEv1aZGXpQzWxNFiA)  I had a dream  ']) + '\n'
-s = """kk
-* abc
-def
+k = '\n'.join(
+    ['r', '- [](q://AXrTVCs7cfrCb-CF07mSpw)  f', '      * ha      ', '    - [](q://AXrTVR8ZL4u0xeZq8frhMA)  ha      ',
+     '    + [](q://AXrTVCs7cfrCb-CF07mSpw)  f', '          * ha      ']) + '\n'
+s = """r
+1. f
+    1. s
 """
 print(s)
 
-ast = SyntaxTreeNode(MarkdownIt().parse(k))
+ast = SyntaxTreeNode(MarkdownIt().parse(s))
 
 exit()
 

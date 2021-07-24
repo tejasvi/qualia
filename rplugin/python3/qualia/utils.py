@@ -1,5 +1,4 @@
 from base64 import urlsafe_b64encode
-from dataclasses import dataclass
 from hashlib import sha256
 from json import loads, dumps
 from re import compile
@@ -14,10 +13,10 @@ from markdown_it.token import Token
 from markdown_it.tree import SyntaxTreeNode
 from pynvim import Nvim
 
-from qualia import DuplicateException, CloneException
-from qualia.config import DB_FOLDER, LEVEL_SPACES, EXPANDED_BULLET, COLLAPSED_BULLET
-from qualia.models import NodeId, JSONType, BufferNodeId, NODE_ID_ATTR
-from qualia.states import ledger
+from qualia import DuplicateException
+from qualia import states
+from qualia.config import DB_FOLDER, LEVEL_SPACES, EXPANDED_BULLET, COLLAPSED_BULLET, TO_EXPAND_BULLET
+from qualia.models import NodeId, JSONType, BufferNodeId, NODE_ID_ATTR, Tree, Cursors, CloneChildrenException
 
 _md_parser = MarkdownIt().parse
 
@@ -58,24 +57,12 @@ def batch_undo(nvim: Nvim):
         yield
 
 
-def get_buffer_id(node_id: NodeId) -> BufferNodeId:
-    return BufferNodeId(node_id)
-    # base65536 doesn't output brackets https://qntm.org/safe
-    # return base65536.encode(node_id.encode())
-
-
-@dataclass
-class Cursors:
-    content: lmdb.Cursor
-    children: lmdb.Cursor
-    views: lmdb.Cursor
-
-
 class Database:
     def __enter__(self) -> Cursors:
-        self.env = env = lmdb.open(DB_FOLDER, max_dbs=3)
+        db_names = "content", "children", "views", "unsynced_content", "unsynced_children", "unsynced_views", "buffer_to_node_id", "node_to_buffer_id"
+        self.env = env = lmdb.open(DB_FOLDER, max_dbs=len(db_names))
         self.txn = env.begin(write=True)
-        return Cursors(**{db_name: self.sub_db(db_name) for db_name in ("content", "children", "views")})
+        return Cursors(**{db_name: self.sub_db(db_name) for db_name in db_names})
 
     def sub_db(self, db_name: str) -> lmdb.Cursor:
         return self.txn.cursor(self.env.open_db(db_name.encode(), self.txn))
@@ -106,28 +93,52 @@ def put_key_val(key: str, val: JSONType, cursor: lmdb.Cursor) -> None:
     cursor.put(key.encode(), dumps(val).encode())
 
 
+def node_to_buffer_id(node_id: NodeId) -> BufferNodeId:
+    return BufferNodeId(node_id)
+    # buffer_node_id = get_key_val(node_id, cursors.buffer_to_node_id)
+    # if buffer_node_id is None:
+    #     if cursors.buffer_to_node_id.last():
+    #         last_buffer_id_bytes = cursors.buffer_to_node_id.key()
+    #         new_counter = int.from_bytes(last_buffer_id_bytes, 'big') + 1
+    #         buffer_id_bytes = new_counter.to_bytes(32, 'big').decode()
+    #     else:
+    #         buffer_id_bytes = (0).to_bytes(32, 'big')
+    #     buffer_node_id = base65536.encode(buffer_id_bytes)
+    #     # base65536 doesn't output brackets https://qntm.org/safe
+    #     put_key_val(node_id, buffer_node_id, cursors.node_to_buffer_id)
+    # return buffer_node_id
+
+
+def buffer_to_node_id(buffer_id: BufferNodeId) -> Union[None, NodeId]:
+    return NodeId(buffer_id)
+    # buffer_id_bytes = base65536.decode(buffer_id)
+    # return state.cursors.buffer_to_node_id.get(buffer_id_bytes)
+
+
 def split_id_from_line(line: str) -> Tuple[Union[NodeId, None], str]:
     node_id = None
     id_regex = compile(r"\[]\(q://(.+?)\) {2}")
     id_match = id_regex.match(line)
     if id_match:
         buffer_node_id = BufferNodeId(id_match.group(1))
-        if buffer_node_id in ledger.buffer_node_id_map:
-            node_id = ledger.buffer_node_id_map[buffer_node_id]
-            line = line.removeprefix(id_match.group(0))
+        node_id = buffer_to_node_id(buffer_node_id)
+        line = line.removeprefix(id_match.group(0))
     return node_id, line
 
 
-def content_lines_to_buffer_lines(content_lines: list[str], node_id: NodeId, level: int, expanded: bool) -> tuple[
+def content_lines_to_buffer_lines(content_lines: list[str], node_id: NodeId, level: int, expanded: bool,
+                                  ordered: bool) -> tuple[
     BufferNodeId, list[str]]:
-    buffer_id = get_buffer_id(node_id)
+    buffer_id = node_to_buffer_id(node_id)
     if level == 0:
         buffer_lines = content_lines
     else:
-        space_count = LEVEL_SPACES * (level - 1) + 2
+        offset = 3 if ordered else 2
+        space_count = LEVEL_SPACES * (level - 1) + offset
         space_prefix = ' ' * space_count
         buffer_lines = [
-            space_prefix[:-2] + f"{EXPANDED_BULLET if expanded else COLLAPSED_BULLET} [](q://{buffer_id})  " +
+            space_prefix[
+            :-offset] + f"{'1.' if ordered else (EXPANDED_BULLET if expanded else COLLAPSED_BULLET)} [](q://{buffer_id})  " +
             content_lines[
                 0]]
         for idx, line in enumerate(content_lines[1:]):
@@ -145,16 +156,10 @@ def get_previous_sibling_node_loc(list_item_ast: SyntaxTreeNode, node_id: NodeId
     return node_loc
 
 
-def raise_if_duplicate_sibling(list_item_ast: SyntaxTreeNode, node_id: NodeId, sub_list_tree: dict[NodeId, dict],
-                               tree: dict[NodeId, dict]) -> None:
+def raise_if_duplicate_sibling(list_item_ast: SyntaxTreeNode, node_id: NodeId, tree: Tree) -> None:
     if node_id in tree:
-        clone_node_loc = list_item_ast.map
-        other_node_loc = None
-        if sub_list_tree and tree[node_id]:
-            other_node_loc = get_previous_sibling_node_loc(list_item_ast, node_id)
-        elif sub_list_tree and not tree[node_id]:
-            clone_node_loc = get_previous_sibling_node_loc(list_item_ast, node_id)
-        raise (DuplicateException if other_node_loc else CloneException)(node_id, clone_node_loc, other_node_loc)
+        other_node_loc = get_previous_sibling_node_loc(list_item_ast, node_id)
+        raise DuplicateException(node_id, list_item_ast.map, other_node_loc)
 
 
 def get_ast_sub_lists(list_item_ast: SyntaxTreeNode) -> list[SyntaxTreeNode]:
@@ -170,7 +175,35 @@ def get_ast_sub_lists(list_item_ast: SyntaxTreeNode) -> list[SyntaxTreeNode]:
     return sub_lists
 
 
-def should_process_children(list_item_ast: SyntaxTreeNode, node_id: NodeId, sub_list_tree: dict[NodeId, dict]):
+def expand_consider_sub_list_tree(list_item_ast: SyntaxTreeNode, node_id: NodeId, sub_list_tree: Tree):
+    ordered_list_item = list_item_ast.parent.type == 'ordered_list' and list_item_ast.previous_sibling is not None
+
+    bullet = list_item_ast.markup
     parent_node_id = list_item_ast.parent.parent.meta[NODE_ID_ATTR]
-    return list_item_ast.markup == EXPANDED_BULLET and (
-            (parent_node_id in ledger and node_id in ledger[parent_node_id].children_ids) or sub_list_tree)
+    not_new = parent_node_id in states.ledger and node_id in states.ledger[parent_node_id].children_ids
+
+    if ordered_list_item or not_new:
+        consider_sub_tree = bullet not in (COLLAPSED_BULLET, TO_EXPAND_BULLET)
+        expand = bullet != COLLAPSED_BULLET
+    else:
+        children = get_key_val(node_id, states.cursors.children)
+
+        if children is None:
+            expand = True
+            consider_sub_tree = True
+        else:
+            if sub_list_tree.keys() ^ children:
+                raise CloneChildrenException(node_id, list_item_ast.map)
+            consider_sub_tree = False
+            expand = True
+
+    return expand, consider_sub_tree
+
+
+def create_root_if_new(root_id: NodeId) -> None:
+    cursors = states.cursors
+    for cursor, val in ((cursors.content, ['']), (cursors.children, []), (cursors.views, {})):
+        if get_key_val(root_id, cursor) is None:
+            put_key_val(root_id, val, cursor)
+    for cursor in (cursors.unsynced_content, cursors.unsynced_children, cursors.unsynced_views):
+        put_key_val(root_id, True, cursor)
