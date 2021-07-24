@@ -7,6 +7,7 @@ from orderedset import OrderedSet
 NodeId = NewType("NodeId", str)
 BufferNodeId = NewType("BufferNodeId", str)
 Tree = dict[NodeId, Union[dict, bool]]
+LineRange = tuple[int, int]
 
 
 @dataclass
@@ -30,14 +31,13 @@ class ProcessState:
 @dataclass
 class CloneChildrenException(Exception):
     node_id: NodeId
-    loc: tuple[int, int]
+    line_range: tuple[int, int]
 
 
 @dataclass
 class DuplicateException(Exception):
     node_id: NodeId
-    loc_1: tuple[int, int]
-    loc_2: tuple[int, int]
+    line_ranges: tuple[LineRange, LineRange]
 
 
 @dataclass

@@ -57,6 +57,7 @@ def render(root_view: View, buffer: Buffer, nvim: Nvim) -> None:
             new_root_view, new_changes = Process().process_lines(old_content_lines.copy(), root_view.root_id)
             new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.root_id)
             re_content_lines = get_buffer_lines_from_view(new_root_view)
+        raise exp
 
     # nvim.err_write(str((new_content_lines, old_content_lines)))
     print(new_content_lines, old_content_lines)

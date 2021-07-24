@@ -11,7 +11,6 @@ from qualia.config import DB_FOLDER, LEVEL_SPACES
 from qualia.models import DuplicateException, NodeId, BufferNodeId, Ledger, CloneChildrenException
 from qualia.render import render
 from qualia.sync import sync_buffer
-# from difflib import Differ
 from qualia.utils import Database
 
 shutil.rmtree(DB_FOLDER, ignore_errors=True)
@@ -52,31 +51,41 @@ class Qualia:
         if undotree["seq_cur"] < undotree["seq_last"] or undotree["synced"] == 0:
             self.log(("UNDO RET", undotree["synced"] == 0, undotree["seq_cur"] < undotree["seq_last"]))
             return
+
+        if self.nvim.funcs.mode().startswith("i"):
+            return
+
         self.main()
 
     def delete_highlights(self, buffer_numer) -> None:
         for ns_id in (self.clone_ns, self.duplicate_ns):
             self.nvim.funcs.nvim_buf_clear_namespace(buffer_numer, ns_id, 0, -1)
 
-    def main(self, *_args) -> None:
+    def should_continue(self) -> bool:
         buffer = self.nvim.current.buffer
         undotree = self.nvim.funcs.undotree()
         if undotree["seq_cur"] < undotree["seq_last"]:
             self.log(("UNDO RET", undotree["synced"] == 0, undotree["seq_cur"] < undotree["seq_last"]))
-            return
+            return False
         if undotree["seq_cur"] - self._undo_seq > 1:
             self.ledgers.pop(buffer.number)
         self._undo_seq = undotree["seq_cur"]
 
-        # Undo changes changedtick to check that before
+        # Undo changes changedtick so check that before
         changedtick = self.nvim.eval("b:changedtick")
         if changedtick == self._changedtick:
-            return
+            return False
         else:
             self._changedtick = changedtick
 
+        return True
+
+    def main(self, *_args) -> None:
+        if not self.should_continue():
+            return
+
         with Database() as cursors:
-            # self.nvim.current.line = "Hello from your plugin!"
+            buffer = self.nvim.current.buffer
             self.delete_highlights(buffer.number)
             states.ledger = self.ledgers[buffer.number]
             states.cursors = cursors
@@ -87,16 +96,16 @@ class Qualia:
                 self.nvim.command("set write")
             except DuplicateException as exp:
                 self.nvim.command("set nowrite")
-                self.log(f"Unsynced duplicate, {exp.node_id}, {exp.loc_1} {exp.loc_2}")
-                for node_locs in (exp.loc_1, exp.loc_2):
-                    for line_num in node_locs:
+                self.log(f"Unsynced duplicate, {exp.node_id}, {exp.line_ranges}")
+                for node_locs in exp.line_ranges:
+                    for line_num in range(node_locs[0], node_locs[1]):
                         self.nvim.funcs.nvim_buf_add_highlight(buffer.number, self.clone_ns, "ErrorMsg", line_num, 0,
                                                                -1)
             except CloneChildrenException as exp:
                 self.nvim.command("set nowrite")
-                self.log(f"Clone children, {exp.node_id}, {exp.loc}")
-                self.nvim.funcs.nvim_buf_add_highlight(buffer.number, self.clone_ns, "ErrorMsg", exp.loc, 0, -1)
-            self.count += 1
+                self.log(f"Clone children, {exp.node_id}, {exp.line_range}")
+                for line_num in range(exp.line_range[0], exp.line_range[1]):
+                    self.nvim.funcs.nvim_buf_add_highlight(buffer.number, self.clone_ns, "ErrorMsg", line_num, 0, -1)
 
     @function("TestFunction")
     def test_function(self, *_args: Any):

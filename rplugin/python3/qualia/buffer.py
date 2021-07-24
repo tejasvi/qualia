@@ -7,8 +7,8 @@ from orderedset import OrderedSet
 from qualia import BufferNodeId
 from qualia import states
 from qualia.models import NodeId, View, ProcessState, NODE_ID_ATTR, Tree
-from qualia.utils import get_md_ast, get_node_id, conflict, split_id_from_line, raise_if_duplicate_sibling, \
-    get_ast_sub_lists, expand_consider_sub_list_tree
+from qualia.utils import get_md_ast, conflict, get_id_line, raise_if_duplicate_sibling, \
+    get_ast_sub_lists, preserve_expand_consider_sub_tree
 
 
 class Process:
@@ -25,21 +25,19 @@ class Process:
         root_tree: Tree = {}  # {root_id: {child_1: {..}, child_2: {..}, ..}}
 
         root_ast = get_md_ast(lines)
-        self._process_list_item_ast(root_ast, root_tree, {})
+        self._process_list_item_ast(root_ast, root_tree, [])
 
         data = root_tree.popitem()
         root_view = View(*data)
         return root_view, self._changes
 
-    def _process_list_item_ast(self, list_item_ast: SyntaxTreeNode, tree: Tree, extended_sub_list_tree: Tree) -> Tree:
+    def _process_list_item_ast(self, list_item_ast: SyntaxTreeNode, tree: Tree,
+                               ordered_child_asts: list[SyntaxTreeNode]):
         root_ast = list_item_ast.type == 'root'
         content_start_line_num = list_item_ast.map[0]
-        content_indent = 0 if root_ast else self._lines[content_start_line_num].index(
-            list_item_ast.markup) + 2
+        content_indent = 0 if root_ast else self._lines[content_start_line_num].index(list_item_ast.markup) + 2
         first_line = self._lines[content_start_line_num][content_indent:]
-        node_id, id_line = split_id_from_line(first_line)
-        if node_id is None:
-            node_id = get_node_id()
+        node_id, id_line = get_id_line(first_line)
         list_item_ast.meta[NODE_ID_ATTR] = node_id
 
         sub_lists = get_ast_sub_lists(list_item_ast)
@@ -51,45 +49,39 @@ class Process:
             for line in self._lines[content_start_line_num + 1: content_end_line_num]
         ]
 
-        sub_list_tree = self._process_list_item_asts(sub_lists) | extended_sub_list_tree
+        sub_list_tree = self._process_list_item_asts(sub_lists)
+        if ordered_child_asts:
+            self._process_list_item_ast(ordered_child_asts[0], sub_list_tree, ordered_child_asts[1:])
 
         raise_if_duplicate_sibling(list_item_ast, node_id, tree)
 
-        expand, consider_sub_list_tree = (True, True) if root_ast else expand_consider_sub_list_tree(list_item_ast,
-                                                                                                     node_id,
-                                                                                                     sub_list_tree)
-        tree[node_id] = (sub_list_tree or None) if expand else None
+        expand, consider_sub_list_tree = (True, True) if root_ast else preserve_expand_consider_sub_tree(
+            list_item_ast, node_id, sub_list_tree)
+        tree[node_id] = sub_list_tree if expand else None
         self._process_node(node_id, content_lines, OrderedSet(sub_list_tree) if consider_sub_list_tree else None)
-        return sub_list_tree
 
     def _process_list_item_asts(self, list_item_asts: list[SyntaxTreeNode]) -> Tree:
         sub_list_tree = {}
         for list_item_ast, list_end_line in zip_longest(list_item_asts, (ast.map[0] for ast in list_item_asts[1:]),
                                                         fillvalue=list_item_asts and list_item_asts[0].parent.map[1]):
-            last_tree = {}
-            iterable = zip_longest(list_item_ast.children,
-                                   (ast.map[0] for ast in list_item_ast.children[1:]),
-                                   fillvalue=list_end_line)
+            children_asts = list_item_ast.children
+            if not children_asts:
+                continue
+            later_children_asts = children_asts[1:]
 
             ordered_list = list_item_ast.type == 'ordered_list'
-            if ordered_list:
-                iterable = reversed(list(iterable))
-                child_context = {}
-            else:
-                child_context = sub_list_tree
 
-            for child_list_item_ast, item_end_line in iterable:
+            for child_list_item_ast, item_end_line in zip_longest(children_asts,
+                                                                  (ast.map[0] for ast in later_children_asts),
+                                                                  fillvalue=list_end_line):
                 token_obj = child_list_item_ast.token or child_list_item_ast.nester_tokens.opening
                 token_obj.map = child_list_item_ast.map[0], item_end_line
 
-                self._process_list_item_ast(child_list_item_ast, child_context, last_tree)
+                if not ordered_list:
+                    self._process_list_item_ast(child_list_item_ast, sub_list_tree, [])
 
-                if ordered_list:
-                    last_tree = child_context
-                    child_context = {}
             if ordered_list:
-                assert len(last_tree) == 1
-                sub_list_tree.update(last_tree)
+                self._process_list_item_ast(children_asts[0], sub_list_tree, later_children_asts)
         return sub_list_tree
 
     def _process_node(self, node_id: NodeId, content_lines: list[str], children_ids: Union[None, OrderedSet]):

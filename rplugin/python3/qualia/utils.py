@@ -4,7 +4,7 @@ from json import loads, dumps
 from re import compile
 from secrets import token_urlsafe
 from time import time_ns
-from typing import Callable, Tuple, Union
+from typing import Callable, Union
 from uuid import uuid4
 
 import lmdb
@@ -115,14 +115,15 @@ def buffer_to_node_id(buffer_id: BufferNodeId) -> Union[None, NodeId]:
     # return state.cursors.buffer_to_node_id.get(buffer_id_bytes)
 
 
-def split_id_from_line(line: str) -> Tuple[Union[NodeId, None], str]:
-    node_id = None
+def get_id_line(line: str) -> tuple[NodeId, str]:
     id_regex = compile(r"\[]\(q://(.+?)\) {2}")
     id_match = id_regex.match(line)
     if id_match:
+        line = line.removeprefix(id_match.group(0))
         buffer_node_id = BufferNodeId(id_match.group(1))
         node_id = buffer_to_node_id(buffer_node_id)
-        line = line.removeprefix(id_match.group(0))
+    else:
+        node_id = get_node_id()
     return node_id, line
 
 
@@ -146,7 +147,7 @@ def content_lines_to_buffer_lines(content_lines: list[str], node_id: NodeId, lev
     return buffer_id, buffer_lines
 
 
-def get_previous_sibling_node_loc(list_item_ast: SyntaxTreeNode, node_id: NodeId) -> tuple[int, int]:
+def previous_sibling_node_line_range(list_item_ast: SyntaxTreeNode, node_id: NodeId) -> tuple[int, int]:
     while True:
         assert list_item_ast
         if list_item_ast.previous_sibling.meta[NODE_ID_ATTR] == node_id:
@@ -158,8 +159,8 @@ def get_previous_sibling_node_loc(list_item_ast: SyntaxTreeNode, node_id: NodeId
 
 def raise_if_duplicate_sibling(list_item_ast: SyntaxTreeNode, node_id: NodeId, tree: Tree) -> None:
     if node_id in tree:
-        other_node_loc = get_previous_sibling_node_loc(list_item_ast, node_id)
-        raise DuplicateException(node_id, list_item_ast.map, other_node_loc)
+        sibling_line_range = previous_sibling_node_line_range(list_item_ast, node_id)
+        raise DuplicateException(node_id, (list_item_ast.map, sibling_line_range))
 
 
 def get_ast_sub_lists(list_item_ast: SyntaxTreeNode) -> list[SyntaxTreeNode]:
@@ -175,27 +176,28 @@ def get_ast_sub_lists(list_item_ast: SyntaxTreeNode) -> list[SyntaxTreeNode]:
     return sub_lists
 
 
-def expand_consider_sub_list_tree(list_item_ast: SyntaxTreeNode, node_id: NodeId, sub_list_tree: Tree):
-    ordered_list_item = list_item_ast.parent.type == 'ordered_list' and list_item_ast.previous_sibling is not None
-
+def preserve_expand_consider_sub_tree(list_item_ast: SyntaxTreeNode, node_id: NodeId, sub_list_tree: Tree):
     bullet = list_item_ast.markup
-    parent_node_id = list_item_ast.parent.parent.meta[NODE_ID_ATTR]
+
+    parent_ast = list_item_ast.previous_sibling if (
+            list_item_ast.parent.type == 'ordered_list' and list_item_ast.previous_sibling) else list_item_ast.parent.parent
+    parent_node_id = parent_ast.meta[NODE_ID_ATTR]
+
     not_new = parent_node_id in states.ledger and node_id in states.ledger[parent_node_id].children_ids
 
-    if ordered_list_item or not_new:
+    if not_new:
         consider_sub_tree = bullet not in (COLLAPSED_BULLET, TO_EXPAND_BULLET)
-        expand = bullet != COLLAPSED_BULLET
     else:
         children = get_key_val(node_id, states.cursors.children)
 
         if children is None:
-            expand = True
             consider_sub_tree = True
         else:
-            if sub_list_tree.keys() ^ children:
+            if sub_list_tree and sub_list_tree.keys() ^ children:
                 raise CloneChildrenException(node_id, list_item_ast.map)
             consider_sub_tree = False
-            expand = True
+
+    expand = bullet == TO_EXPAND_BULLET or (bullet != COLLAPSED_BULLET and sub_list_tree)
 
     return expand, consider_sub_tree
 
