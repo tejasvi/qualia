@@ -16,7 +16,7 @@ from pynvim import Nvim
 from qualia import DuplicateException
 from qualia import states
 from qualia.config import DB_FOLDER, LEVEL_SPACES, EXPANDED_BULLET, COLLAPSED_BULLET, TO_EXPAND_BULLET
-from qualia.models import NodeId, JSONType, BufferNodeId, NODE_ID_ATTR, Tree, Cursors, CloneChildrenException
+from qualia.models import NodeId, JSONType, BufferNodeId, NODE_ID_ATTR, Tree, Cursors, CloneChildrenException, Ledger
 
 _md_parser = MarkdownIt().parse
 
@@ -149,7 +149,7 @@ def content_lines_to_buffer_lines(content_lines: list[str], node_id: NodeId, lev
 
 def previous_sibling_node_line_range(list_item_ast: SyntaxTreeNode, node_id: NodeId) -> tuple[int, int]:
     while True:
-        assert list_item_ast
+        assert list_item_ast.previous_sibling, (node_id, list_item_ast.map)
         if list_item_ast.previous_sibling.meta[NODE_ID_ATTR] == node_id:
             node_loc = list_item_ast.previous_sibling.map
             break
@@ -163,27 +163,47 @@ def raise_if_duplicate_sibling(list_item_ast: SyntaxTreeNode, node_id: NodeId, t
         raise DuplicateException(node_id, (list_item_ast.map, sibling_line_range))
 
 
-def get_ast_sub_lists(list_item_ast: SyntaxTreeNode) -> list[SyntaxTreeNode]:
-    sub_lists = []
+def get_ast_sub_lists(list_item_ast: SyntaxTreeNode) -> list[
+    SyntaxTreeNode]:  # TODO: Merge two loops, line range updation here instead of process list asts?
+    child_list_asts = []
     if list_item_ast.children:
-        cur_child_ast = list_item_ast.children[-1]
-        while cur_child_ast.type.endswith("_list"):
-            sub_lists.append(cur_child_ast)
-            cur_child_ast = cur_child_ast.previous_sibling
-            if not cur_child_ast or cur_child_ast is list_item_ast.children[0]:
+        cur_child_list_ast = list_item_ast.children[-1]
+        while cur_child_list_ast.type.endswith("_list"):
+            child_list_asts.append(cur_child_list_ast)
+            cur_child_list_ast = cur_child_list_ast.previous_sibling
+            if not cur_child_list_ast or cur_child_list_ast is list_item_ast.children[0]:
                 break
-    sub_lists.reverse()
-    return sub_lists
+    child_list_asts.reverse()
+
+    last_type = None
+    merged_child_asts: list[SyntaxTreeNode] = []
+    for cur_child_list_ast in child_list_asts:
+        cur_type = cur_child_list_ast.type
+        if cur_type == last_type:
+            last_child_list_ast = merged_child_asts[-1]
+            last_child_list_ast.children.extend(cur_child_list_ast.children)
+
+            token_obj = last_child_list_ast.token or last_child_list_ast.nester_tokens.opening
+            token_obj.map = last_child_list_ast.map[0], cur_child_list_ast.map[1]
+
+            for child_ast in cur_child_list_ast.children:
+                child_ast.parent = last_child_list_ast
+        else:
+            merged_child_asts.append(cur_child_list_ast)
+        last_type = cur_type
+
+    return merged_child_asts
 
 
-def preserve_expand_consider_sub_tree(list_item_ast: SyntaxTreeNode, node_id: NodeId, sub_list_tree: Tree):
+def preserve_expand_consider_sub_tree(list_item_ast: SyntaxTreeNode, node_id: NodeId, sub_list_tree: Tree,
+                                      ledger: Ledger):
     bullet = list_item_ast.markup
 
     parent_ast = list_item_ast.previous_sibling if (
             list_item_ast.parent.type == 'ordered_list' and list_item_ast.previous_sibling) else list_item_ast.parent.parent
     parent_node_id = parent_ast.meta[NODE_ID_ATTR]
 
-    not_new = parent_node_id in states.ledger and node_id in states.ledger[parent_node_id].children_ids
+    not_new = parent_node_id in ledger and node_id in ledger[parent_node_id].children_ids
 
     if not_new:
         consider_sub_tree = bullet not in (COLLAPSED_BULLET, TO_EXPAND_BULLET)

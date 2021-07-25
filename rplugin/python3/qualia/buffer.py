@@ -5,8 +5,7 @@ from markdown_it.tree import SyntaxTreeNode
 from orderedset import OrderedSet
 
 from qualia import BufferNodeId
-from qualia import states
-from qualia.models import NodeId, View, ProcessState, NODE_ID_ATTR, Tree
+from qualia.models import NodeId, View, ProcessState, NODE_ID_ATTR, Tree, Ledger
 from qualia.utils import get_md_ast, conflict, get_id_line, raise_if_duplicate_sibling, \
     get_ast_sub_lists, preserve_expand_consider_sub_tree
 
@@ -16,7 +15,7 @@ class Process:
         self._lines = None
         self._changes = None
 
-    def process_lines(self, lines: list[str], root_id: NodeId) -> tuple[View, ProcessState]:
+    def process_lines(self, lines: list[str], root_id: NodeId, ledger: Ledger) -> tuple[View, ProcessState]:
         self._changes = ProcessState()
         self._lines = lines
 
@@ -25,14 +24,14 @@ class Process:
         root_tree: Tree = {}  # {root_id: {child_1: {..}, child_2: {..}, ..}}
 
         root_ast = get_md_ast(lines)
-        self._process_list_item_ast(root_ast, root_tree, [])
+        self._process_list_item_ast(root_ast, root_tree, [], ledger)
 
         data = root_tree.popitem()
         root_view = View(*data)
         return root_view, self._changes
 
     def _process_list_item_ast(self, list_item_ast: SyntaxTreeNode, tree: Tree,
-                               ordered_child_asts: list[SyntaxTreeNode]):
+                               ordered_child_asts: list[SyntaxTreeNode], ledger: Ledger):
         root_ast = list_item_ast.type == 'root'
         content_start_line_num = list_item_ast.map[0]
         content_indent = 0 if root_ast else self._lines[content_start_line_num].index(list_item_ast.markup) + 2
@@ -49,18 +48,19 @@ class Process:
             for line in self._lines[content_start_line_num + 1: content_end_line_num]
         ]
 
-        sub_list_tree = self._process_list_item_asts(sub_lists)
+        sub_list_tree = self._process_list_item_asts(sub_lists, ledger)
         if ordered_child_asts:
-            self._process_list_item_ast(ordered_child_asts[0], sub_list_tree, ordered_child_asts[1:])
+            self._process_list_item_ast(ordered_child_asts[0], sub_list_tree, ordered_child_asts[1:], ledger)
 
         raise_if_duplicate_sibling(list_item_ast, node_id, tree)
 
         expand, consider_sub_list_tree = (True, True) if root_ast else preserve_expand_consider_sub_tree(
-            list_item_ast, node_id, sub_list_tree)
+            list_item_ast, node_id, sub_list_tree, ledger)
         tree[node_id] = sub_list_tree if expand else None
-        self._process_node(node_id, content_lines, OrderedSet(sub_list_tree) if consider_sub_list_tree else None)
+        self._process_node(node_id, content_lines, OrderedSet(sub_list_tree) if consider_sub_list_tree else None,
+                           ledger)
 
-    def _process_list_item_asts(self, list_item_asts: list[SyntaxTreeNode]) -> Tree:
+    def _process_list_item_asts(self, list_item_asts: list[SyntaxTreeNode], ledger: Ledger) -> Tree:
         sub_list_tree = {}
         for list_item_ast, list_end_line in zip_longest(list_item_asts, (ast.map[0] for ast in list_item_asts[1:]),
                                                         fillvalue=list_item_asts and list_item_asts[0].parent.map[1]):
@@ -78,14 +78,15 @@ class Process:
                 token_obj.map = child_list_item_ast.map[0], item_end_line
 
                 if not ordered_list:
-                    self._process_list_item_ast(child_list_item_ast, sub_list_tree, [])
+                    self._process_list_item_ast(child_list_item_ast, sub_list_tree, [], ledger)
 
             if ordered_list:
-                self._process_list_item_ast(children_asts[0], sub_list_tree, later_children_asts)
+                self._process_list_item_ast(children_asts[0], sub_list_tree, later_children_asts, ledger)
         return sub_list_tree
 
-    def _process_node(self, node_id: NodeId, content_lines: list[str], children_ids: Union[None, OrderedSet]):
-        if node_id not in states.ledger:
+    def _process_node(self, node_id: NodeId, content_lines: list[str], children_ids: Union[None, OrderedSet],
+                      ledger: Ledger):
+        if node_id not in ledger:
             self._changes.changed_content_map[node_id] = content_lines
             if children_ids is not None:
                 self._changes.changed_children_map[node_id] = children_ids
@@ -96,7 +97,7 @@ class Process:
         # manually expecting the visible node to stay the same but it changes. Though the incoming
         # change is similar to the change coming from external syncing source.
 
-        content_changed = states.ledger[node_id].content_lines != content_lines
+        content_changed = ledger[node_id].content_lines != content_lines
         if content_changed:
             if node_id in self._changes.changed_content_map:
                 self._changes.changed_content_map[node_id] = conflict(content_lines,
@@ -104,7 +105,7 @@ class Process:
             else:
                 self._changes.changed_content_map[node_id] = content_lines
 
-        children_changed = children_ids is not None and (children_ids ^ states.ledger[node_id].children_ids)
+        children_changed = children_ids is not None and (children_ids ^ ledger[node_id].children_ids)
         if children_changed:
             if node_id in self._changes.changed_children_map:
                 self._changes.changed_children_map[node_id].update(children_ids)

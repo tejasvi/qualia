@@ -1,9 +1,13 @@
 import shutil
 import traceback
 from collections import defaultdict
+from subprocess import CalledProcessError
+from subprocess import check_call
+from sys import executable
 from time import sleep
 from typing import Any
 
+from pkg_resources import working_set
 from pynvim import plugin, Nvim, function, attach, autocmd
 
 from qualia import states
@@ -14,6 +18,21 @@ from qualia.sync import sync_buffer
 from qualia.utils import Database
 
 shutil.rmtree(DB_FOLDER, ignore_errors=True)
+
+
+def install_dependencies() -> None:
+    required = {'lmdb', 'orderedset', 'markdown-it-py'}
+    installed = {pkg.key for pkg in working_set}
+    for package in required - installed:
+        command = [executable, "-m", "pip", "install", package]
+        try:
+            check_call(command)
+        except CalledProcessError as e:
+            print("ERROR: Can't install the missing ", package, " dependency. Attempting ", ' '.join(command))
+            raise e
+
+
+install_dependencies()
 
 
 @plugin
@@ -90,8 +109,8 @@ class Qualia:
             states.ledger = self.ledgers[buffer.number]
             states.cursors = cursors
             try:
-                root_view = sync_buffer(buffer)
-                render(root_view, buffer, self.nvim)
+                root_view = sync_buffer(buffer, states.ledger)
+                render(root_view, buffer, self.nvim, states.ledger, cursors)
                 # write to filename with hex-encoded root ID
                 self.nvim.command("set write")
             except DuplicateException as exp:
@@ -103,7 +122,7 @@ class Qualia:
                                                                -1)
             except CloneChildrenException as exp:
                 self.nvim.command("set nowrite")
-                self.log(f"Clone children, {exp.node_id}, {exp.line_range}")
+                self.log(f"Radical organization. Manual save required, {exp.node_id}, {exp.line_range}")
                 for line_num in range(exp.line_range[0], exp.line_range[1]):
                     self.nvim.funcs.nvim_buf_add_highlight(buffer.number, self.clone_ns, "ErrorMsg", line_num, 0, -1)
 
@@ -358,4 +377,25 @@ Git syncing: top level directories with note ids as their name (hex encoded to b
     The system is flexible to include arbitrary content in a node like attachments.
         When there is single non child symlink it represents _the_ content of the node.
 subprocess.Popen to trigger backup/git sync in independant process
+Manual override save works by  saving the buffer as is  and clearing the ledger 
+TODO: Merge conflicting view while syncing with git
+Git:
+    While true:
+        Pull from remote
+        For each node in the repo, merge and handle conflict with the db
+        Clear repo directory
+        Starting from root node in db (first node), visit its descendants and add them to the repo.
+        Commit
+        If push success
+            break
+        else:
+            reset to origin: git reset --hard origin
+            startover
+Update backlinks only in the local db
+For search, create bloom (or cuckoo) filter for each node.
+    Tokenization
+        split content, filter the spaces `re.split('(\W)', 'a-b ter.ce-ret 000-123')`
+            Remove spaces
+            Limit only to max first three characters
+                Then pipe the node content to fzf
 """

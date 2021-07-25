@@ -5,14 +5,13 @@ from orderedset import OrderedSet
 from pynvim import Nvim
 from pynvim.api import Buffer
 
-from qualia import states
 from qualia.buffer import Process
-from qualia.models import NodeId, View, NodeData, Tree
+from qualia.models import NodeId, View, NodeData, Tree, Ledger, Cursors
 from qualia.utils import get_key_val, batch_undo, content_lines_to_buffer_lines
 
 
-def render(root_view: View, buffer: Buffer, nvim: Nvim) -> None:
-    new_content_lines = get_buffer_lines_from_view(root_view)
+def render(root_view: View, buffer: Buffer, nvim: Nvim, ledger: Ledger, cursors: Cursors) -> None:
+    new_content_lines = get_buffer_lines_from_view(root_view, ledger, cursors)
     old_content_lines = list(buffer)
     undojoin = batch_undo(nvim)
 
@@ -47,35 +46,35 @@ def render(root_view: View, buffer: Buffer, nvim: Nvim) -> None:
     assert new_content_lines == list(buffer)
 
     try:
-        new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.root_id)
+        new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.root_id, ledger)
         assert (not new_changes or (nvim.err_write(str(new_changes)) and False))
-        re_content_lines = get_buffer_lines_from_view(new_root_view)
+        re_content_lines = get_buffer_lines_from_view(new_root_view, ledger, cursors)
         assert (new_content_lines == re_content_lines) or (
                 nvim.err_write(str((new_content_lines, re_content_lines))) and False)
     except Exception as exp:
         for _ in range(100):
-            new_root_view, new_changes = Process().process_lines(old_content_lines.copy(), root_view.root_id)
-            new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.root_id)
-            re_content_lines = get_buffer_lines_from_view(new_root_view)
+            new_root_view, new_changes = Process().process_lines(old_content_lines.copy(), root_view.root_id, ledger)
+            new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.root_id, ledger)
+            re_content_lines = get_buffer_lines_from_view(new_root_view, ledger, cursors)
         raise exp
 
     # nvim.err_write(str((new_content_lines, old_content_lines)))
     print(new_content_lines, old_content_lines)
 
 
-def get_buffer_lines_from_view(view: View) -> list[str]:
-    states.ledger.clear()
+def get_buffer_lines_from_view(view: View, ledger: Ledger, cursors: Cursors) -> list[str]:
+    ledger.clear()
     buffer_lines: list[str] = []
     stack: list[tuple[NodeId, Tree, int, bool]] = [(view.root_id, {view.root_id: view.sub_tree}, -1, False)]
     while stack:
         cur_node_id, context, previous_level, previously_ordered = stack.pop()
         children_context = context[cur_node_id] if context and cur_node_id in context else None
 
-        content_lines = get_key_val(cur_node_id, states.cursors.content)
+        content_lines = get_key_val(cur_node_id, cursors.content)
         if content_lines is None:
             continue
 
-        children_id_list = get_key_val(cur_node_id, states.cursors.children) or []
+        children_id_list = get_key_val(cur_node_id, cursors.children) or []
         children_ids = OrderedSet(cast(list[NodeId], children_id_list))
 
         expanded = not children_ids or (children_context is not None)
@@ -93,7 +92,7 @@ def get_buffer_lines_from_view(view: View) -> list[str]:
                                                                      expanded, ordered)
         buffer_lines += node_buffer_lines
 
-        if cur_node_id not in states.ledger:
-            states.ledger[cur_node_id] = NodeData(content_lines, frozenset(children_ids))
+        if cur_node_id not in ledger:
+            ledger[cur_node_id] = NodeData(content_lines, frozenset(children_ids))
 
     return buffer_lines or ['']
