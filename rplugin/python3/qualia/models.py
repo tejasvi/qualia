@@ -1,7 +1,7 @@
 from dataclasses import dataclass
-from typing import NewType, Union, Any
+from typing import NewType, Union, Any, TypedDict
 
-import lmdb
+from lmdb import Cursor
 from orderedset import OrderedSet
 
 NodeId = NewType("NodeId", str)
@@ -10,9 +10,14 @@ Tree = dict[NodeId, Union[dict, bool]]
 LineRange = tuple[int, int]
 
 
+class Client(TypedDict):
+    client_id: str
+    client_name: str
+
+
 @dataclass
 class View:
-    root_id: NodeId
+    main_id: NodeId
     sub_tree: Union[Tree, None]
 
 
@@ -29,13 +34,13 @@ class ProcessState:
 
 
 @dataclass
-class CloneChildrenException(Exception):
+class UncertainNodeChildrenException(Exception):
     node_id: NodeId
     line_range: tuple[int, int]
 
 
 @dataclass
-class DuplicateException(Exception):
+class DuplicateNodeException(Exception):
     node_id: NodeId
     line_ranges: tuple[LineRange, LineRange]
 
@@ -46,7 +51,7 @@ class NodeData:
     children_ids: frozenset[NodeId]
 
 
-Ledger = dict[NodeId, NodeData]
+LastSeen = dict[NodeId, NodeData]
 
 JSONType = Union[str, int, float, bool, None, dict[str, Any], list[Any]]
 NODE_ID_ATTR = "node_id"
@@ -54,13 +59,19 @@ NODE_ID_ATTR = "node_id"
 
 @dataclass
 class Cursors:
-    content: lmdb.Cursor
-    children: lmdb.Cursor
-    views: lmdb.Cursor
+    content: Cursor
+    children: Cursor
+    views: Cursor
 
-    unsynced_content: lmdb.Cursor
-    unsynced_children: lmdb.Cursor
-    unsynced_views: lmdb.Cursor
+    unsynced_content: Cursor
+    unsynced_children: Cursor
+    unsynced_views: Cursor
 
-    buffer_to_node_id: lmdb.Cursor
-    node_to_buffer_id: lmdb.Cursor
+    buffer_to_node_id: Cursor
+    node_to_buffer_id: Cursor
+
+    metadata: Cursor
+
+
+class NotNodeDirectory(Exception):
+    """The directory is invalid node. Should contain README.md and name should be hex encoded UUID"""

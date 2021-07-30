@@ -1,21 +1,30 @@
 from pathlib import Path
+from shutil import rmtree
 
 from appdirs import user_data_dir
 
-_app_folder_path = Path(user_data_dir("qualianotes", "qualia"))
-try:
-    _app_folder_path.mkdir(parents=True, exist_ok=True)
-except FileExistsError as e:
-    if not (_app_folder_path.is_symlink() and _app_folder_path.is_dir()):
-        raise Exception(f"{_app_folder_path} already exists as a file.")
+APP_FOLDER_PATH = Path(user_data_dir("qualianotes", "qualia"))
 
-GIT_FOLDER: str = _app_folder_path.joinpath("git").as_posix()
-DB_FOLDER: str = _app_folder_path.joinpath("db").as_posix()
+FILE_FOLDER = APP_FOLDER_PATH.joinpath("files")
+
+DB_FOLDER = APP_FOLDER_PATH.joinpath("db")
+rmtree(DB_FOLDER, ignore_errors=True)
+
+GIT_FOLDER = APP_FOLDER_PATH.joinpath("git")
+rmtree(GIT_FOLDER, ignore_errors=True)
+
+GIT_TOKEN = 'ghp_QJSHBmXvDAbjiiI' 'BHTDEb3yryLofv52dcTbP'
+GIT_TOKEN_URL = f"https://{GIT_TOKEN}@github.com/tejasvi8874/test"
+GIT_URL = "https://github.com/tejasvi8874/test"
+GIT_BRANCH = "master"
+GIT_SEARCH_URL = f"{GIT_URL}/search?q="
 
 CONFLICTS: str = "conflicts"
-_git_token = "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"
-GIT_URL = f"https://{_git_token}@github.com/tejasvi8874/qualia"
 LEVEL_SPACES = 4
 EXPANDED_BULLET = '-'
 TO_EXPAND_BULLET = '*'
 COLLAPSED_BULLET = '+'
+ROOT_ID_KEY = "root_id"
+CLIENT_KEY = "client"
+LOG_FILENAME = APP_FOLDER_PATH.joinpath('logs')
+CONTENT_CHILDREN_SEPARATOR_LINES = ["<hr>", ""]

@@ -1,27 +1,30 @@
-import shutil
 import traceback
 from collections import defaultdict
 from subprocess import CalledProcessError
 from subprocess import check_call
-from sys import executable
+from sys import executable, argv
 from time import sleep
 from typing import Any
 
 from pkg_resources import working_set
 from pynvim import plugin, Nvim, function, attach, autocmd
+from pynvim.api import Buffer
 
-from qualia import states
-from qualia.config import DB_FOLDER, LEVEL_SPACES
-from qualia.models import DuplicateException, NodeId, BufferNodeId, Ledger, CloneChildrenException
+from qualia.config import DB_FOLDER, LEVEL_SPACES, ROOT_ID_KEY
+from qualia.git import sync_with_git
+from qualia.models import DuplicateNodeException, NodeId, BufferNodeId, LastSeen, UncertainNodeChildrenException, \
+ \
+    Client
 from qualia.render import render
 from qualia.sync import sync_buffer
-from qualia.utils import Database
+from qualia.utils import Database, put_key_val, get_uuid, set_client_if_new, name_to_node_id, get_key_val, get_main_id, \
+    bootstrap
 
-shutil.rmtree(DB_FOLDER, ignore_errors=True)
+GIT_FLAG_ARG = "git"
 
 
 def install_dependencies() -> None:
-    required = {'lmdb', 'orderedset', 'markdown-it-py'}
+    required = {'lmdb', 'orderedset', 'markdown-it-py', 'appdirs', 'base65536', 'pynvim'}
     installed = {pkg.key for pkg in working_set}
     for package in required - installed:
         command = [executable, "-m", "pip", "install", package]
@@ -45,7 +48,8 @@ class Qualia:
         self.autocmd = None
         self.clone_ns = self.nvim.funcs.nvim_create_namespace("clones")
         self.duplicate_ns = self.nvim.funcs.nvim_create_namespace("duplicates")
-        self.ledgers: dict[int, Ledger] = defaultdict(Ledger)
+        self.buffer_last_seen: dict[int, LastSeen] = defaultdict(LastSeen)
+        self.last_git_sync = 0
 
     def log(self, *args: Any):
         text = ' - '.join([str(text) for text in args])
@@ -54,10 +58,11 @@ class Qualia:
         else:
             print(text)
 
-    @autocmd("TextChanged,FocusGained,BufEnter,InsertLeavePre,BufLeave", pattern='*.q.md', sync=True,
+    @autocmd("TextChanged,FocusGained,BufEnter,InsertLeavePre,BufLeave,BufFilePost", pattern='*.q.md', sync=True,
              allow_nested=False,
              eval=None)
     def auto_main(self, *_args) -> None:
+        return
         self.autocmd = True
         try:
             self.main(*_args)
@@ -68,7 +73,7 @@ class Qualia:
         self.autocmd = False
         undotree = self.nvim.funcs.undotree()
         if undotree["seq_cur"] < undotree["seq_last"] or undotree["synced"] == 0:
-            self.log(("UNDO RET", undotree["synced"] == 0, undotree["seq_cur"] < undotree["seq_last"]))
+            # self.log(("UNDO RET", undotree["synced"] == 0, undotree["seq_cur"] < undotree["seq_last"]))
             return
 
         if self.nvim.funcs.mode().startswith("i"):
@@ -80,14 +85,13 @@ class Qualia:
         for ns_id in (self.clone_ns, self.duplicate_ns):
             self.nvim.funcs.nvim_buf_clear_namespace(buffer_numer, ns_id, 0, -1)
 
-    def should_continue(self) -> bool:
-        buffer = self.nvim.current.buffer
+    def should_continue(self, buffer: Buffer) -> bool:
         undotree = self.nvim.funcs.undotree()
         if undotree["seq_cur"] < undotree["seq_last"]:
-            self.log(("UNDO RET", undotree["synced"] == 0, undotree["seq_cur"] < undotree["seq_last"]))
+            # self.log(("UNDO RET", undotree["synced"] == 0, undotree["seq_cur"] < undotree["seq_last"]))
             return False
         if undotree["seq_cur"] - self._undo_seq > 1:
-            self.ledgers.pop(buffer.number)
+            self.buffer_last_seen.pop(buffer.number)
         self._undo_seq = undotree["seq_cur"]
 
         # Undo changes changedtick so check that before
@@ -100,31 +104,41 @@ class Qualia:
         return True
 
     def main(self, *_args) -> None:
-        if not self.should_continue():
+        buffer: Buffer = self.nvim.current.buffer
+        if not self.should_continue(buffer):
             return
 
+        self.delete_highlights(buffer.number)
         with Database() as cursors:
-            buffer = self.nvim.current.buffer
-            self.delete_highlights(buffer.number)
-            states.ledger = self.ledgers[buffer.number]
-            states.cursors = cursors
             try:
-                root_view = sync_buffer(buffer, states.ledger)
-                render(root_view, buffer, self.nvim, states.ledger, cursors)
-                # write to filename with hex-encoded root ID
-                self.nvim.command("set write")
-            except DuplicateException as exp:
-                self.nvim.command("set nowrite")
-                self.log(f"Unsynced duplicate, {exp.node_id}, {exp.line_ranges}")
-                for node_locs in exp.line_ranges:
-                    for line_num in range(node_locs[0], node_locs[1]):
-                        self.nvim.funcs.nvim_buf_add_highlight(buffer.number, self.clone_ns, "ErrorMsg", line_num, 0,
-                                                               -1)
-            except CloneChildrenException as exp:
-                self.nvim.command("set nowrite")
-                self.log(f"Radical organization. Manual save required, {exp.node_id}, {exp.line_range}")
-                for line_num in range(exp.line_range[0], exp.line_range[1]):
-                    self.nvim.funcs.nvim_buf_add_highlight(buffer.number, self.clone_ns, "ErrorMsg", line_num, 0, -1)
+                root_view = sync_buffer(buffer, self.buffer_last_seen[buffer.number], cursors)
+            except DuplicateNodeException as exp:
+                self.handle_duplicate_node(buffer, exp)
+            except UncertainNodeChildrenException as exp:
+                self.handle_uncertain_node_children(buffer, exp)
+            else:
+                last_seen = self.buffer_last_seen[buffer.number]
+                render(root_view, buffer, self.nvim, last_seen, cursors)
+                self.nvim.command("set write | write")
+
+        sync_with_git()
+        # if time() - self.last_git_sync > 15:
+        #     Popen([executable, __file__, GIT_FLAG_ARG], start_new_session=True)
+        #     self.last_git_sync = time()
+
+    def handle_uncertain_node_children(self, buffer: Buffer, exp: UncertainNodeChildrenException):
+        self.nvim.command("set nowrite")
+        self.log(f"Node children uncertain. Manual save required, {exp.node_id}, {exp.line_range}")
+        for line_num in range(exp.line_range[0], exp.line_range[1]):
+            self.nvim.funcs.nvim_buf_add_highlight(buffer.number, self.clone_ns, "ErrorMsg", line_num, 0, -1)
+
+    def handle_duplicate_node(self, buffer: Buffer, exp: DuplicateNodeException):
+        self.nvim.command("set nowrite")
+        self.log(f"Unsynced duplicate, {exp.node_id}, {exp.line_ranges}")
+        for node_locs in exp.line_ranges:
+            for line_num in range(node_locs[0], node_locs[1]):
+                self.nvim.funcs.nvim_buf_add_highlight(buffer.number, self.clone_ns, "ErrorMsg", line_num, 0,
+                                                       -1)
 
     @function("TestFunction")
     def test_function(self, *_args: Any):
@@ -132,12 +146,16 @@ class Qualia:
 
 
 if __name__ == "__main__":
-    snvim = attach('socket', path=r'\\.\pipe\nvim-15600-0')  # path=environ['NVIM_LISTEN_ADDRESS'])
-    q = Qualia(snvim)
-    while True:
-        q.poll()
-        sleep(0.01)
-    # main()
+    if len(argv) >= 2 and argv[1] == GIT_FLAG_ARG:
+        sync_with_git()
+    else:
+        bootstrap()
+        snvim = attach('socket', path=r'\\.\pipe\nvim-15600-0')  # path=environ['NVIM_LISTEN_ADDRESS'])
+        q = Qualia(snvim)
+        while True:
+            q.poll()
+            sleep(0.01)
+        # main()
 
 """
 import lmdb
@@ -331,9 +349,9 @@ How it will work for VS Code?
 
 Why content hash check with db is faulty?
 User changes a node in buffer. Before contents are synced
-    User uses a different instance, changes the node content equal to ledger node content in previous instance.
+    User uses a different instance, changes the node content equal to last_seen node content in previous instance.
     When previous instance is synced, nothing amiss is found and latest user changes are overwritten due to latest db write policy
-    To fix, ledger state has last seen version number of db and if during sync db gives larger number, the db content is newer and conflicts are handled 
+    To fix, last_seen state has last seen version number of db and if during sync db gives larger number, the db content is newer and conflicts are handled 
     accordingly (if the buffer has newer content as well).
 
 TextChanged: In normal mode and on leaving insert mode
@@ -360,7 +378,7 @@ Most of timethere is not conflict
 There is main two-way _sync_ function. Like GC pauses.
 
 Link every new node from a global index node. No one is orphan anymore. How to handle rendering in this case?
-Ledger is needed to store the last render state since the DB can change between the renders and then next sync with overwrite the external changes instead of detecting conflicts using ledger da
+LastSeen is needed to store the last render state since the DB can change between the renders and then next sync with overwrite the external changes instead of detecting conflicts using last_seen da
 From directory containing vimrc with: let &runtimepath.=','.escape(expand('<sfile>:p:h'), '\,')
     nvim -u vimrc and then UpdateRemotePlugins
     Then start nvim normally from anywhere and open file with .q extension
@@ -377,7 +395,7 @@ Git syncing: top level directories with note ids as their name (hex encoded to b
     The system is flexible to include arbitrary content in a node like attachments.
         When there is single non child symlink it represents _the_ content of the node.
 subprocess.Popen to trigger backup/git sync in independant process
-Manual override save works by  saving the buffer as is  and clearing the ledger 
+Manual override save works by  saving the buffer as is  and clearing the last_seen 
 TODO: Merge conflicting view while syncing with git
 Git:
     While true:
@@ -398,4 +416,6 @@ For search, create bloom (or cuckoo) filter for each node.
             Remove spaces
             Limit only to max first three characters
                 Then pipe the node content to fzf
+firestore for realtime
+git for syncing
 """

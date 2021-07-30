@@ -6,12 +6,12 @@ from pynvim import Nvim
 from pynvim.api import Buffer
 
 from qualia.buffer import Process
-from qualia.models import NodeId, View, NodeData, Tree, Ledger, Cursors
+from qualia.models import NodeId, View, NodeData, Tree, LastSeen, Cursors
 from qualia.utils import get_key_val, batch_undo, content_lines_to_buffer_lines
 
 
-def render(root_view: View, buffer: Buffer, nvim: Nvim, ledger: Ledger, cursors: Cursors) -> None:
-    new_content_lines = get_buffer_lines_from_view(root_view, ledger, cursors)
+def render(root_view: View, buffer: Buffer, nvim: Nvim, last_seen: LastSeen, cursors: Cursors) -> None:
+    new_content_lines = get_buffer_lines_from_view(root_view, last_seen, cursors)
     old_content_lines = list(buffer)
     undojoin = batch_undo(nvim)
 
@@ -46,26 +46,26 @@ def render(root_view: View, buffer: Buffer, nvim: Nvim, ledger: Ledger, cursors:
     assert new_content_lines == list(buffer)
 
     try:
-        new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.root_id, ledger)
+        new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.main_id, last_seen)
         assert (not new_changes or (nvim.err_write(str(new_changes)) and False))
-        re_content_lines = get_buffer_lines_from_view(new_root_view, ledger, cursors)
+        re_content_lines = get_buffer_lines_from_view(new_root_view, last_seen, cursors)
         assert (new_content_lines == re_content_lines) or (
                 nvim.err_write(str((new_content_lines, re_content_lines))) and False)
     except Exception as exp:
         for _ in range(100):
-            new_root_view, new_changes = Process().process_lines(old_content_lines.copy(), root_view.root_id, ledger)
-            new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.root_id, ledger)
-            re_content_lines = get_buffer_lines_from_view(new_root_view, ledger, cursors)
+            new_root_view, new_changes = Process().process_lines(old_content_lines.copy(), root_view.main_id, last_seen)
+            new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.main_id, last_seen)
+            re_content_lines = get_buffer_lines_from_view(new_root_view, last_seen, cursors)
         raise exp
 
     # nvim.err_write(str((new_content_lines, old_content_lines)))
     print(new_content_lines, old_content_lines)
 
 
-def get_buffer_lines_from_view(view: View, ledger: Ledger, cursors: Cursors) -> list[str]:
-    ledger.clear()
+def get_buffer_lines_from_view(view: View, last_seen: LastSeen, cursors: Cursors) -> list[str]:
+    last_seen.clear()
     buffer_lines: list[str] = []
-    stack: list[tuple[NodeId, Tree, int, bool]] = [(view.root_id, {view.root_id: view.sub_tree}, -1, False)]
+    stack: list[tuple[NodeId, Tree, int, bool]] = [(view.main_id, {view.main_id: view.sub_tree}, -1, False)]
     while stack:
         cur_node_id, context, previous_level, previously_ordered = stack.pop()
         children_context = context[cur_node_id] if context and cur_node_id in context else None
@@ -92,7 +92,7 @@ def get_buffer_lines_from_view(view: View, ledger: Ledger, cursors: Cursors) -> 
                                                                      expanded, ordered)
         buffer_lines += node_buffer_lines
 
-        if cur_node_id not in ledger:
-            ledger[cur_node_id] = NodeData(content_lines, frozenset(children_ids))
+        if cur_node_id not in last_seen:
+            last_seen[cur_node_id] = NodeData(content_lines, frozenset(children_ids))
 
     return buffer_lines or ['']

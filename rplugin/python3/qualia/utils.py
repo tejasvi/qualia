@@ -1,24 +1,36 @@
-from base64 import urlsafe_b64encode
+from base64 import urlsafe_b64encode, urlsafe_b64decode
 from hashlib import sha256
 from json import loads, dumps
-from re import compile
-from secrets import token_urlsafe
-from time import time_ns
-from typing import Callable, Union
-from uuid import uuid4
+from os import symlink
+from os.path import basename
+from pathlib import Path
+from re import compile, search
+from secrets import token_urlsafe, token_bytes
+from subprocess import run, CalledProcessError
+from tempfile import gettempdir
+from time import time_ns, sleep
+from typing import Callable, Union, Iterable, cast, TextIO
+from uuid import uuid4, UUID
 
 import lmdb
+from lmdb import Cursor
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 from markdown_it.tree import SyntaxTreeNode
+from orderedset import OrderedSet
 from pynvim import Nvim
+from pynvim.api import Buffer
 
-from qualia import DuplicateException
-from qualia import states
-from qualia.config import DB_FOLDER, LEVEL_SPACES, EXPANDED_BULLET, COLLAPSED_BULLET, TO_EXPAND_BULLET
-from qualia.models import NodeId, JSONType, BufferNodeId, NODE_ID_ATTR, Tree, Cursors, CloneChildrenException, Ledger
+from qualia.config import DB_FOLDER, LEVEL_SPACES, EXPANDED_BULLET, COLLAPSED_BULLET, TO_EXPAND_BULLET, GIT_FOLDER, \
+    ROOT_ID_KEY, APP_FOLDER_PATH, FILE_FOLDER, GIT_BRANCH, CLIENT_KEY, LOG_FILENAME, CONTENT_CHILDREN_SEPARATOR_LINES, \
+    GIT_TOKEN_URL, GIT_SEARCH_URL
+from qualia.models import Client, NodeData
+from qualia.models import NodeId, JSONType, BufferNodeId, NODE_ID_ATTR, Tree, Cursors, UncertainNodeChildrenException, \
+    LastSeen, DuplicateNodeException
 
 _md_parser = MarkdownIt().parse
+
+import logging
 
 
 def get_md_ast(content_lines: list[str]) -> SyntaxTreeNode:
@@ -28,12 +40,13 @@ def get_md_ast(content_lines: list[str]) -> SyntaxTreeNode:
 
 
 def get_uuid() -> NodeId:
-    return NodeId(urlsafe_b64encode(uuid4().bytes).rstrip(b"=").decode())
+    return cast(NodeId, urlsafe_b64encode(uuid4().bytes).decode())
 
 
 def get_time_uuid() -> NodeId:
     left_padded_time = (time_ns() // 10 ** 6).to_bytes(6, "big")
-    return urlsafe_b64encode(left_padded_time).decode() + token_urlsafe(10)
+    id_bytes = left_padded_time + token_bytes(10)
+    return cast(NodeId, urlsafe_b64encode(id_bytes).decode())
 
 
 get_random_id: Callable[[], NodeId] = get_time_uuid
@@ -59,10 +72,11 @@ def batch_undo(nvim: Nvim):
 
 class Database:
     def __enter__(self) -> Cursors:
-        db_names = "content", "children", "views", "unsynced_content", "unsynced_children", "unsynced_views", "buffer_to_node_id", "node_to_buffer_id"
-        self.env = env = lmdb.open(DB_FOLDER, max_dbs=len(db_names))
+        db_names = "content", "children", "views", "unsynced_content", "unsynced_children", "unsynced_views", "buffer_to_node_id", "node_to_buffer_id", "metadata"
+        self.env = env = lmdb.open(DB_FOLDER.as_posix(), max_dbs=len(db_names))
         self.txn = env.begin(write=True)
-        return Cursors(**{db_name: self.sub_db(db_name) for db_name in db_names})
+        cursors = Cursors(**{db_name: self.sub_db(db_name) for db_name in db_names})
+        return cursors
 
     def sub_db(self, db_name: str) -> lmdb.Cursor:
         return self.txn.cursor(self.env.open_db(db_name.encode(), self.txn))
@@ -81,16 +95,17 @@ def content_hash(content_lines: list[str]):
 
 
 def conflict(new_lines: list[str], old_lines: list[str], no_check: bool) -> list[str]:
-    return new_lines + ["<!-- CONFLICT -->"] + old_lines if no_check or new_lines != old_lines else new_lines
+    return ["<<<<<<< OLD"] + old_lines + ["======="] + new_lines + [
+        ">>>>>>> NEW"] if no_check or new_lines != old_lines else new_lines
 
 
-def get_key_val(key: str, cursor: lmdb.Cursor) -> JSONType:
-    value_bytes = cursor.get(key.encode())
+def get_key_val(key: Union[str, bytes], cursor: lmdb.Cursor) -> JSONType:
+    value_bytes = cursor.get(key if isinstance(key, bytes) else key.encode())
     return None if value_bytes is None else loads(value_bytes.decode())
 
 
-def put_key_val(key: str, val: JSONType, cursor: lmdb.Cursor) -> None:
-    cursor.put(key.encode(), dumps(val).encode())
+def put_key_val(key: Union[str, bytes], val: JSONType, cursor: lmdb.Cursor, overwrite) -> None:
+    cursor.put(key if isinstance(key, bytes) else key.encode(), dumps(val).encode(), overwrite=overwrite)
 
 
 def node_to_buffer_id(node_id: NodeId) -> BufferNodeId:
@@ -160,7 +175,7 @@ def previous_sibling_node_line_range(list_item_ast: SyntaxTreeNode, node_id: Nod
 def raise_if_duplicate_sibling(list_item_ast: SyntaxTreeNode, node_id: NodeId, tree: Tree) -> None:
     if node_id in tree:
         sibling_line_range = previous_sibling_node_line_range(list_item_ast, node_id)
-        raise DuplicateException(node_id, (list_item_ast.map, sibling_line_range))
+        raise DuplicateNodeException(node_id, (list_item_ast.map, sibling_line_range))
 
 
 def get_ast_sub_lists(list_item_ast: SyntaxTreeNode) -> list[
@@ -175,6 +190,12 @@ def get_ast_sub_lists(list_item_ast: SyntaxTreeNode) -> list[
                 break
     child_list_asts.reverse()
 
+    merged_child_asts = merge_sibling_lists_ignore_bullets(child_list_asts)
+
+    return merged_child_asts
+
+
+def merge_sibling_lists_ignore_bullets(child_list_asts: list[SyntaxTreeNode])->list[SyntaxTreeNode]:
     last_type = None
     merged_child_asts: list[SyntaxTreeNode] = []
     for cur_child_list_ast in child_list_asts:
@@ -191,30 +212,28 @@ def get_ast_sub_lists(list_item_ast: SyntaxTreeNode) -> list[
         else:
             merged_child_asts.append(cur_child_list_ast)
         last_type = cur_type
-
     return merged_child_asts
 
 
 def preserve_expand_consider_sub_tree(list_item_ast: SyntaxTreeNode, node_id: NodeId, sub_list_tree: Tree,
-                                      ledger: Ledger):
+                                      last_seen: LastSeen):
     bullet = list_item_ast.markup
 
-    parent_ast = list_item_ast.previous_sibling if (
-            list_item_ast.parent.type == 'ordered_list' and list_item_ast.previous_sibling) else list_item_ast.parent.parent
+    parent_ast = list_item_ast.previous_sibling if (list_item_ast.parent.type == 'ordered_list'
+                                                    and list_item_ast.previous_sibling) else list_item_ast.parent.parent
     parent_node_id = parent_ast.meta[NODE_ID_ATTR]
 
-    not_new = parent_node_id in ledger and node_id in ledger[parent_node_id].children_ids
+    not_new = parent_node_id in last_seen and node_id in last_seen[parent_node_id].children_ids
 
     if not_new:
         consider_sub_tree = bullet not in (COLLAPSED_BULLET, TO_EXPAND_BULLET)
     else:
-        children = get_key_val(node_id, states.cursors.children)
-
-        if children is None:
-            consider_sub_tree = True
+        if sub_list_tree:
+            if node_id in last_seen and sub_list_tree.keys() ^ last_seen[node_id].children_ids:
+                raise UncertainNodeChildrenException(node_id, list_item_ast.map)
+            else:
+                consider_sub_tree = True
         else:
-            if sub_list_tree and sub_list_tree.keys() ^ children:
-                raise CloneChildrenException(node_id, list_item_ast.map)
             consider_sub_tree = False
 
     expand = bullet == TO_EXPAND_BULLET or (bullet != COLLAPSED_BULLET and sub_list_tree)
@@ -222,10 +241,218 @@ def preserve_expand_consider_sub_tree(list_item_ast: SyntaxTreeNode, node_id: No
     return expand, consider_sub_tree
 
 
-def create_root_if_new(root_id: NodeId) -> None:
-    cursors = states.cursors
-    for cursor, val in ((cursors.content, ['']), (cursors.children, []), (cursors.views, {})):
-        if get_key_val(root_id, cursor) is None:
-            put_key_val(root_id, val, cursor)
-    for cursor in (cursors.unsynced_content, cursors.unsynced_children, cursors.unsynced_views):
-        put_key_val(root_id, True, cursor)
+def run_git_cmd(arguments: list[str]) -> str:
+    result = run(["git"] + arguments, check=True, cwd=GIT_FOLDER, capture_output=True)
+    stdout = '\n'.join([stream.decode() for stream in (result.stdout, result.stderr)]).strip()
+    logging.debug(f"GIT:\n{stdout}\n")
+    return stdout
+
+
+def _check_symlinks_enabled() -> bool:
+    temp_dir = Path(gettempdir())
+    for try_num in range(100):
+        src = temp_dir.joinpath(f'{try_num}.test.q')
+        try:
+            open(src, 'x').close()
+            symlink_dest = temp_dir.joinpath('.symlink.test.q')
+            symlink(src, symlink_dest)
+            symlink_dest.unlink()
+        except FileExistsError:
+            continue
+        except OSError:
+            return False
+        src.unlink(src)
+        return True
+
+
+class LockNotAcquired(Exception):
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
+class GitInit:
+    def __enter__(self) -> None:
+        max_tries = 3
+        for tries in range(1, max_tries + 1):
+            self.lock_file_path = Path(GIT_FOLDER).joinpath(".git/.qualia_lock")
+            try:
+                self.lock_file = open(self.lock_file_path, 'x')
+            except FileExistsError:
+                if tries == max_tries:
+                    raise LockNotAcquired(
+                        "Could not acquire lock probably due to previous program crash. "
+                        f"Verify the data and then delete the Lock File: '{self.lock_file_path}' manually.")
+                sleep(10)
+            else:
+                existing_branch = run_git_cmd(["branch", "--show-current"])
+                if existing_branch == GIT_BRANCH:
+                    self.existing_branch = None
+                else:
+                    self.existing_branch = existing_branch
+                    run_git_cmd(["stash"])
+                    run_git_cmd(["switch", "-c", GIT_BRANCH])
+                break
+
+    def __exit__(self, *_args) -> None:
+        if self.existing_branch:
+            run_git_cmd(["checkout", self.existing_branch])
+            run_git_cmd(["stash", "pop"])
+        self.lock_file.close()
+        self.lock_file_path.unlink()
+
+
+def is_valid_uuid(string: str) -> bool:
+    try:
+        UUID(string)
+    except ValueError:
+        return False
+    return True
+
+
+def name_to_node_id(name: str, remove_suffix: str) -> NodeId:
+    if name.endswith(remove_suffix):
+        node_id_hex = name.removesuffix(remove_suffix)
+    else:
+        raise ValueError
+    node_id = NodeId(urlsafe_b64encode(UUID(node_id_hex).bytes).decode())
+    return node_id
+
+
+def add_content_to_node_directory(content_lines: list[str], node_directory_path: Path):
+    with open(node_directory_path.joinpath("README.md"), 'x') as content_file:
+        content_file.write('\n'.join(content_lines) + '\n')
+
+
+def add_children_to_node_directory(node_children_ids: Iterable[NodeId], node_directory_path: Path):
+    for child_node_id in node_children_ids:
+        hex_id = node_id_to_hex(child_node_id)
+        child_path = node_directory_path.joinpath(hex_id + ".q")
+        symlink_source = f"../{hex_id}.q"
+        if symlinks_enabled:
+            symlink(symlink_source, child_path, target_is_directory=True)
+        else:
+            with open(child_path, 'x') as child_file:
+                child_file.writelines([symlink_source])
+
+
+def ensure_root_node(cursors: Cursors) -> None:
+    if get_key_val(ROOT_ID_KEY, cursors.metadata) is None:
+        root_id = get_time_uuid()
+        put_key_val(root_id, [''], cursors.content, False)
+        put_key_val(ROOT_ID_KEY, root_id, cursors.metadata, False)
+
+
+def setup_repository(metadata_cursor: Cursor) -> None:
+    try:
+        run_git_cmd(["rev-parse", "--is-inside-work-tree"])
+    except CalledProcessError:
+        run_git_cmd(["init"])
+        run_git_cmd(["checkout", "-b", GIT_BRANCH])
+        try:
+            run_git_cmd(["pull", GIT_TOKEN_URL, GIT_BRANCH])
+        except CalledProcessError:
+            pass
+        gitattributes_path = GIT_FOLDER.joinpath(".gitattributes")
+        if not gitattributes_path.exists():
+            with open(gitattributes_path, 'x') as f:
+                f.write("*.md merge=union\n* text=auto eol=lf\n")
+            run_git_cmd(["add", "-A"])
+            run_git_cmd(["commit", "-m", "bootstrap"])
+        client_data = Client(**get_key_val(CLIENT_KEY, metadata_cursor))
+        run_git_cmd(["config", "user.name", client_data["client_name"]])
+        run_git_cmd(["config", "user.email", f"{client_data['client_id']}@q.client"])
+
+
+symlinks_enabled = _check_symlinks_enabled()
+
+
+def set_client_if_new(metadata_cursor: Cursor):
+    if metadata_cursor.get(CLIENT_KEY.encode()) is None:
+        client_details = Client(client_id=str(get_uuid()), client_name=f"Vim-{token_urlsafe(1)}")
+        put_key_val(CLIENT_KEY, client_details, metadata_cursor, False)
+
+
+def node_id_to_hex(node_id) -> str:
+    return str(UUID(urlsafe_b64decode(node_id).hex()))
+
+
+def create_directory_if_absent(directory_path: Path):
+    try:
+        directory_path.mkdir(parents=True, exist_ok=True)
+    except FileExistsError:
+        if not (directory_path.is_symlink() and directory_path.is_dir()):
+            raise Exception(f"{directory_path} already exists as a file.")
+
+
+def get_main_id(buffer: Buffer, cursors: Cursors):
+    file_name = basename(buffer.name)
+    try:
+        main_id = name_to_node_id(file_name, '.q.md')
+        if get_key_val(main_id, cursors.content) is None:
+            raise ValueError
+    except ValueError:
+        root_id = get_key_val(ROOT_ID_KEY, cursors.metadata)
+        buffer.name = FILE_FOLDER.joinpath(node_id_to_hex(root_id) + ".q.md").as_posix()
+        main_id = root_id
+    return main_id
+
+
+def bootstrap() -> None:
+    create_directory_if_absent(APP_FOLDER_PATH)
+    create_directory_if_absent(FILE_FOLDER)
+    with Database() as cursors:
+        set_client_if_new(cursors.metadata)
+        setup_repository(cursors.metadata)
+        ensure_root_node(cursors)
+    logging.basicConfig(filename=LOG_FILENAME, level=logging.DEBUG, force=True)
+
+
+bootstrap()
+
+
+def file_children_line_to_node_id(line: str) -> NodeId:
+    uuid_match = search(r"[0-9a-f]{8}(?:-?[0-9a-f]{4}){4}[0-9a-f]{8}(?=\.md\)$)", line)
+    assert uuid_match, f"Child node ID for '{line}' couldn't be parsed"
+    return name_to_node_id(uuid_match.group(), '')
+
+
+def get_file_content_children(file: TextIO) -> tuple[list[str], OrderedSet]:
+    lines = file.read().splitlines()
+    children_ids = []
+    while lines:
+        line = lines.pop()
+        if line == CONTENT_CHILDREN_SEPARATOR_LINES[1]:
+            assert lines.pop() == CONTENT_CHILDREN_SEPARATOR_LINES[0]
+            break
+        children_ids.append(file_children_line_to_node_id(line))
+    return lines, OrderedSet(reversed(children_ids))
+
+
+def unsynced_nodes_last_seen_data(cursors: Cursors):
+    last_seen = LastSeen()
+    for node_id, _ in cursors.unsynced_children:
+        children_ids = frozenset(get_key_val(node_id, cursors.children))
+        if node_id in last_seen:
+            last_seen[node_id].children_ids = children_ids
+        else:
+            last_seen[node_id] = NodeData([''], children_ids)
+    for node_id, _ in cursors.unsynced_content:
+        content_lines = get_key_val(node_id, cursors.content)
+        if node_id in last_seen:
+            last_seen[node_id].content_lines = content_lines
+        else:
+            last_seen[node_id] = NodeData(content_lines, frozenset())
+    return last_seen
+
+
+def create_markdown_file(cursors: Cursors, node_id: NodeId) -> list[NodeId]:
+    content_lines: list[str] = get_key_val(node_id, cursors.content)
+    content_lines.extend(CONTENT_CHILDREN_SEPARATOR_LINES)
+    node_children_ids: list[NodeId] = get_key_val(node_id, cursors.children) or []
+    content_lines.append(f"0. [`Backlinks`]({GIT_SEARCH_URL + node_id_to_hex(node_id)})")
+    for i, child_id in enumerate(node_children_ids):
+        hex_id = node_id_to_hex(child_id)
+        content_lines.append(f"{i}. [`{hex_id}`]({hex_id}.md)")
+    with open(GIT_FOLDER.joinpath(node_id_to_hex(node_id) + ".md"), 'w') as f:
+        f.write('\n'.join(content_lines) + '\n')
+    return node_children_ids
