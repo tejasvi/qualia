@@ -1,12 +1,14 @@
+from collections import UserDict
 from dataclasses import dataclass
-from typing import NewType, Union, Any, TypedDict
+from typing import NewType, Union, Any, TypedDict, Optional
 
 from lmdb import Cursor
 from orderedset import OrderedSet
 
 NodeId = NewType("NodeId", str)
+BufferId = tuple[int, str]
 BufferNodeId = NewType("BufferNodeId", str)
-Tree = dict[NodeId, Union[dict, bool]]
+Tree = dict[NodeId, Optional[dict]]
 LineRange = tuple[int, int]
 
 
@@ -40,6 +42,12 @@ class UncertainNodeChildrenException(Exception):
 
 
 @dataclass
+class LineInfo:
+    node_id: NodeId
+    context: Tree
+
+
+@dataclass
 class DuplicateNodeException(Exception):
     node_id: NodeId
     line_ranges: tuple[LineRange, LineRange]
@@ -51,7 +59,16 @@ class NodeData:
     children_ids: frozenset[NodeId]
 
 
-LastSeen = dict[NodeId, NodeData]
+class LastSeen(UserDict[NodeId, NodeData]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.data: dict[NodeId, NodeData] = {}
+        self.line_info: dict[int, LineInfo] = {}
+
+    def __clear__(self) -> None:
+        self.data.clear()
+        self.line_info.clear()
+
 
 JSONType = Union[str, int, float, bool, None, dict[str, Any], list[Any]]
 NODE_ID_ATTR = "node_id"
@@ -71,6 +88,8 @@ class Cursors:
     node_to_buffer_id: Cursor
 
     metadata: Cursor
+
+    bloom_filters: Cursor
 
 
 class NotNodeDirectory(Exception):

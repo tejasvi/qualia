@@ -6,7 +6,7 @@ from qualia.config import ROOT_ID_KEY, GIT_BRANCH, GIT_TOKEN_URL
 from qualia.models import ProcessState, Cursors, NodeId
 from qualia.sync import sync_with_db
 from qualia.utils import get_key_val, run_git_cmd, GitInit, Database, name_to_node_id, get_file_content_children, \
-    unsynced_nodes_last_seen_data, \
+    pop_unsynced_nodes, \
     create_markdown_file
 
 
@@ -71,7 +71,7 @@ def directory_to_db(cursors: Cursors, changed_file_names: list[str]) -> None:
                     process_state.changed_content_map[node_id] = content_lines
 
     if process_state:
-        last_seen = unsynced_nodes_last_seen_data(cursors)
+        last_seen = pop_unsynced_nodes(cursors)
         sync_with_db(None, process_state, last_seen, cursors)
 
 

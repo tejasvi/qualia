@@ -9,6 +9,7 @@ pynvim
 appdirs
 orderedset
 base65536
+bloomfilter-py
 
 FirebaseData
 Pyrebase

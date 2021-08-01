@@ -33,7 +33,8 @@ class Process:
                                ordered_child_asts: list[SyntaxTreeNode], last_seen: LastSeen):
         is_buffer_ast = list_item_ast.type == 'root'
         content_start_line_num = list_item_ast.map[0]
-        content_indent = 0 if is_buffer_ast else self._lines[content_start_line_num].index(list_item_ast.markup) + 2
+        content_indent = 0 if is_buffer_ast else self._lines[content_start_line_num].index(
+            list_item_ast.markup) + 2
         first_line = self._lines[content_start_line_num][content_indent:]
         node_id, id_line = get_id_line(first_line)
         list_item_ast.meta[NODE_ID_ATTR] = node_id

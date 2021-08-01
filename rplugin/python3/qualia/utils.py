@@ -1,10 +1,13 @@
 from base64 import urlsafe_b64encode, urlsafe_b64decode
+from difflib import SequenceMatcher
 from hashlib import sha256
 from json import loads, dumps
+from logging import getLogger
+from logging.handlers import RotatingFileHandler
 from os import symlink
 from os.path import basename
 from pathlib import Path
-from re import compile, search
+from re import compile, search, split
 from secrets import token_urlsafe, token_bytes
 from subprocess import run, CalledProcessError
 from tempfile import gettempdir
@@ -30,7 +33,9 @@ from qualia.models import NodeId, JSONType, BufferNodeId, NODE_ID_ATTR, Tree, Cu
 
 _md_parser = MarkdownIt().parse
 
-import logging
+logger = getLogger("qualia")
+file_handler = RotatingFileHandler(filename=LOG_FILENAME, mode='w', maxBytes=512000, backupCount=4)
+logger.addHandler(file_handler)
 
 
 def get_md_ast(content_lines: list[str]) -> SyntaxTreeNode:
@@ -71,8 +76,15 @@ def batch_undo(nvim: Nvim):
 
 
 class Database:
+    """
+    For some reason `Database` cannot be nested. E.g. if nesting in save_bloom_filter(), the db is empty on next run.
+    Relevant?
+    > Repeat Environment.open_db() calls for the same name will return the same handle.
+    """
+
     def __enter__(self) -> Cursors:
-        db_names = "content", "children", "views", "unsynced_content", "unsynced_children", "unsynced_views", "buffer_to_node_id", "node_to_buffer_id", "metadata"
+        db_names = ("content", "children", "views", "unsynced_content", "unsynced_children", "unsynced_views",
+                    "buffer_to_node_id", "node_to_buffer_id", "metadata", "bloom_filters")
         self.env = env = lmdb.open(DB_FOLDER.as_posix(), max_dbs=len(db_names))
         self.txn = env.begin(write=True)
         cursors = Cursors(**{db_name: self.sub_db(db_name) for db_name in db_names})
@@ -143,8 +155,7 @@ def get_id_line(line: str) -> tuple[NodeId, str]:
 
 
 def content_lines_to_buffer_lines(content_lines: list[str], node_id: NodeId, level: int, expanded: bool,
-                                  ordered: bool) -> tuple[
-    BufferNodeId, list[str]]:
+                                  ordered: bool) -> list[str]:
     buffer_id = node_to_buffer_id(node_id)
     if level == 0:
         buffer_lines = content_lines
@@ -152,14 +163,12 @@ def content_lines_to_buffer_lines(content_lines: list[str], node_id: NodeId, lev
         offset = 3 if ordered else 2
         space_count = LEVEL_SPACES * (level - 1) + offset
         space_prefix = ' ' * space_count
-        buffer_lines = [
-            space_prefix[
-            :-offset] + f"{'1.' if ordered else (EXPANDED_BULLET if expanded else COLLAPSED_BULLET)} [](q://{buffer_id})  " +
-            content_lines[
-                0]]
+        buffer_lines = [space_prefix[:-offset]
+                        + f"{'1.' if ordered else (EXPANDED_BULLET if expanded else COLLAPSED_BULLET)} [](q://{buffer_id})  "
+                        + content_lines[0]]
         for idx, line in enumerate(content_lines[1:]):
             buffer_lines.append(space_prefix + line)
-    return buffer_id, buffer_lines
+    return buffer_lines
 
 
 def previous_sibling_node_line_range(list_item_ast: SyntaxTreeNode, node_id: NodeId) -> tuple[int, int]:
@@ -195,7 +204,7 @@ def get_ast_sub_lists(list_item_ast: SyntaxTreeNode) -> list[
     return merged_child_asts
 
 
-def merge_sibling_lists_ignore_bullets(child_list_asts: list[SyntaxTreeNode])->list[SyntaxTreeNode]:
+def merge_sibling_lists_ignore_bullets(child_list_asts: list[SyntaxTreeNode]) -> list[SyntaxTreeNode]:
     last_type = None
     merged_child_asts: list[SyntaxTreeNode] = []
     for cur_child_list_ast in child_list_asts:
@@ -244,7 +253,7 @@ def preserve_expand_consider_sub_tree(list_item_ast: SyntaxTreeNode, node_id: No
 def run_git_cmd(arguments: list[str]) -> str:
     result = run(["git"] + arguments, check=True, cwd=GIT_FOLDER, capture_output=True)
     stdout = '\n'.join([stream.decode() for stream in (result.stdout, result.stderr)]).strip()
-    logging.debug(f"GIT:\n{stdout}\n")
+    logger.debug(f"GIT:\n{stdout}\n")
     return stdout
 
 
@@ -339,6 +348,7 @@ def ensure_root_node(cursors: Cursors) -> None:
     if get_key_val(ROOT_ID_KEY, cursors.metadata) is None:
         root_id = get_time_uuid()
         put_key_val(root_id, [''], cursors.content, False)
+        put_key_val(root_id, [], cursors.children, False)
         put_key_val(ROOT_ID_KEY, root_id, cursors.metadata, False)
 
 
@@ -384,17 +394,22 @@ def create_directory_if_absent(directory_path: Path):
             raise Exception(f"{directory_path} already exists as a file.")
 
 
-def get_main_id(buffer: Buffer, cursors: Cursors):
+def resolve_main_id(buffer: Buffer, cursors: Cursors) -> NodeId:
     file_name = basename(buffer.name)
     try:
         main_id = name_to_node_id(file_name, '.q.md')
         if get_key_val(main_id, cursors.content) is None:
             raise ValueError
     except ValueError:
-        root_id = get_key_val(ROOT_ID_KEY, cursors.metadata)
-        buffer.name = FILE_FOLDER.joinpath(node_id_to_hex(root_id) + ".q.md").as_posix()
+        root_id = cast(NodeId, get_key_val(ROOT_ID_KEY, cursors.metadata))
+        assert root_id
+        buffer.name = node_id_to_filename(root_id)
         main_id = root_id
     return main_id
+
+
+def node_id_to_filename(root_id: NodeId) -> str:
+    return FILE_FOLDER.joinpath(node_id_to_hex(root_id) + ".q.md").as_posix()
 
 
 def bootstrap() -> None:
@@ -404,10 +419,6 @@ def bootstrap() -> None:
         set_client_if_new(cursors.metadata)
         setup_repository(cursors.metadata)
         ensure_root_node(cursors)
-    logging.basicConfig(filename=LOG_FILENAME, level=logging.DEBUG, force=True)
-
-
-bootstrap()
 
 
 def file_children_line_to_node_id(line: str) -> NodeId:
@@ -428,20 +439,32 @@ def get_file_content_children(file: TextIO) -> tuple[list[str], OrderedSet]:
     return lines, OrderedSet(reversed(children_ids))
 
 
-def unsynced_nodes_last_seen_data(cursors: Cursors):
+def pop_unsynced_nodes(cursors: Cursors):
     last_seen = LastSeen()
-    for node_id, _ in cursors.unsynced_children:
-        children_ids = frozenset(get_key_val(node_id, cursors.children))
-        if node_id in last_seen:
-            last_seen[node_id].children_ids = children_ids
-        else:
-            last_seen[node_id] = NodeData([''], children_ids)
-    for node_id, _ in cursors.unsynced_content:
-        content_lines = get_key_val(node_id, cursors.content)
-        if node_id in last_seen:
-            last_seen[node_id].content_lines = content_lines
-        else:
-            last_seen[node_id] = NodeData(content_lines, frozenset())
+    unsynced_children = cursors.unsynced_children
+    if unsynced_children.first():
+        while True:
+            node_id: NodeId = unsynced_children.key().decode()
+            unsynced_children.delete()
+            children_ids = frozenset(get_key_val(node_id, cursors.children))
+            if node_id in last_seen:
+                last_seen[node_id].children_ids = children_ids
+            else:
+                last_seen[node_id] = NodeData([''], children_ids)
+            if not unsynced_children.next():
+                break
+    unsynced_content = cursors.unsynced_content
+    if unsynced_content.first():
+        while True:
+            node_id: NodeId = unsynced_content.key().decode()
+            unsynced_content.delete()
+            content_lines = get_key_val(node_id, cursors.content)
+            if node_id in last_seen:
+                last_seen[node_id].content_lines = content_lines
+            else:
+                last_seen[node_id] = NodeData(content_lines, frozenset())
+            if not unsynced_content.next():
+                break
     return last_seen
 
 
@@ -456,3 +479,40 @@ def create_markdown_file(cursors: Cursors, node_id: NodeId) -> list[NodeId]:
     with open(GIT_FOLDER.joinpath(node_id_to_hex(node_id) + ".md"), 'w') as f:
         f.write('\n'.join(content_lines) + '\n')
     return node_children_ids
+
+
+def render_buffer(buffer: Buffer, new_content_lines: list[str], nvim: Nvim) -> list[str]:
+    old_content_lines = list(buffer)
+    undojoin = batch_undo(nvim)
+    offset = 0
+    for opcode, old_i1, old_i2, new_i1, new_i2 in SequenceMatcher(a=old_content_lines, b=new_content_lines,
+                                                                  autojunk=False).get_opcodes():
+        if opcode == "replace":
+            num_old_lines = old_i2 - old_i1
+            num_new_lines = new_i2 - new_i1
+            min_lines = min(num_old_lines, num_new_lines)
+            # setline preserves the marks unlike buffer[lnum] = "content"
+            next(undojoin)
+            assert nvim.funcs.setline(min(old_i1 + offset, len(buffer)) + 1,
+                                      new_content_lines[new_i1:new_i1 + min_lines]) == 0
+            if num_new_lines > num_old_lines:
+                next(undojoin)
+                idx = old_i1 + min_lines + offset
+                buffer[idx:idx] = new_content_lines[new_i1 + min_lines: new_i2]
+            elif num_new_lines < num_old_lines:
+                next(undojoin)
+                del buffer[old_i1 + min_lines + offset:old_i2 + offset]
+            offset += num_new_lines - num_old_lines
+        elif opcode == "insert":
+            next(undojoin)
+            buffer[old_i1 + offset:old_i1 + offset] = new_content_lines[new_i1:new_i2]
+            offset += new_i2 - new_i1
+        elif opcode == "delete":
+            next(undojoin)
+            del buffer[old_i1 + offset:old_i2 + offset]
+            offset -= old_i2 - old_i1
+    return old_content_lines
+
+
+def normalized_prefixes(string: str):
+    return {word[:3].casefold() for word in split(r'(\W)', string) if word and not word.isspace()}
