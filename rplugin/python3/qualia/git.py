@@ -7,10 +7,11 @@ from qualia.models import ProcessState, Cursors, NodeId
 from qualia.sync import sync_with_db
 from qualia.utils import get_key_val, run_git_cmd, GitInit, Database, name_to_node_id, get_file_content_children, \
     pop_unsynced_nodes, \
-    create_markdown_file
+    create_markdown_file, repository_exists
 
 
 def sync_with_git() -> None:
+    assert repository_exists.wait(timeout=60), "Git repository does not exist for syncing"
     with GitInit(), Database() as cursors:
         changed_file_names = fetch_from_remote()
         directory_to_db(cursors, changed_file_names)
@@ -72,7 +73,8 @@ def directory_to_db(cursors: Cursors, changed_file_names: list[str]) -> None:
 
     if process_state:
         last_seen = pop_unsynced_nodes(cursors)
-        sync_with_db(None, process_state, last_seen, cursors)
+        # Realtime broadcast not done since git conflict, if any, will eventually surface
+        sync_with_db(None, process_state, last_seen, cursors, False, False)
 
 
 def db_to_directory(cursors: Cursors) -> None:

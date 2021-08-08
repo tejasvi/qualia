@@ -14,7 +14,8 @@ class Process:
         self._lines = None
         self._changes = None
 
-    def process_lines(self, lines: list[str], main_id: NodeId, last_seen: LastSeen) -> tuple[View, ProcessState]:
+    def process_lines(self, lines: list[str], main_id: NodeId, last_seen: LastSeen) -> tuple[
+        View, ProcessState]:
         self._changes = ProcessState()
         self._lines = lines
 
@@ -102,7 +103,7 @@ class Process:
         if content_changed:
             if node_id in self._changes.changed_content_map:
                 self._changes.changed_content_map[node_id] = conflict(content_lines,
-                                                                      self._changes.changed_content_map[node_id], True)
+                                                                      self._changes.changed_content_map[node_id])
             else:
                 self._changes.changed_content_map[node_id] = content_lines
 

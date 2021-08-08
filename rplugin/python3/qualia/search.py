@@ -13,8 +13,6 @@ def save_bloom_filter(node_id: NodeId, content_lines: list[str], bloom_filters_c
     prefixes = normalized_prefixes(string)
     for prefix in prefixes:
         bloom_filter.put(prefix)
-    # with Database() as cursors:
-    #     cursors.bloom_filters.put(node_id.encode(), bloom_filter.dumps())
     bloom_filters_cursor.put(node_id.encode(), bloom_filter.dumps())
 
 

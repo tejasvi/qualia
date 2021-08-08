@@ -1,3 +1,4 @@
+from _sha256 import sha256
 from base64 import urlsafe_b64encode, urlsafe_b64decode
 from difflib import SequenceMatcher
 from hashlib import sha256
@@ -11,31 +12,31 @@ from re import compile, search, split
 from secrets import token_urlsafe, token_bytes
 from subprocess import run, CalledProcessError
 from tempfile import gettempdir
-from time import time_ns, sleep
-from typing import Callable, Union, Iterable, cast, TextIO
+from threading import Thread, Event
+from time import time_ns, sleep, time
+from typing import Callable, Union, Iterable, cast, TextIO, Optional
 from uuid import uuid4, UUID
 
 import lmdb
 from lmdb import Cursor
+from lmdb.cpython import Environment
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 from markdown_it.tree import SyntaxTreeNode
-from orderedset import OrderedSet
+from orderedset._orderedset import OrderedSet
 from pynvim import Nvim
 from pynvim.api import Buffer
 
 from qualia.config import DB_FOLDER, LEVEL_SPACES, EXPANDED_BULLET, COLLAPSED_BULLET, TO_EXPAND_BULLET, GIT_FOLDER, \
     ROOT_ID_KEY, APP_FOLDER_PATH, FILE_FOLDER, GIT_BRANCH, CLIENT_KEY, LOG_FILENAME, CONTENT_CHILDREN_SEPARATOR_LINES, \
-    GIT_TOKEN_URL, GIT_SEARCH_URL
-from qualia.models import Client, NodeData
+    GIT_TOKEN_URL, GIT_SEARCH_URL, GIT_URL
+from qualia.models import Client, NodeData, RealtimeData
 from qualia.models import NodeId, JSONType, BufferNodeId, NODE_ID_ATTR, Tree, Cursors, UncertainNodeChildrenException, \
     LastSeen, DuplicateNodeException
 
 _md_parser = MarkdownIt().parse
 
 logger = getLogger("qualia")
-file_handler = RotatingFileHandler(filename=LOG_FILENAME, mode='w', maxBytes=512000, backupCount=4)
-logger.addHandler(file_handler)
 
 
 def get_md_ast(content_lines: list[str]) -> SyntaxTreeNode:
@@ -77,25 +78,30 @@ def batch_undo(nvim: Nvim):
 
 class Database:
     """
-    For some reason `Database` cannot be nested. E.g. if nesting in save_bloom_filter(), the db is empty on next run.
+    For some reason environment cannot be nested therefore . E.g. if nesting in save_bloom_filter(), the db is empty on next run.
     Relevant?
     > Repeat Environment.open_db() calls for the same name will return the same handle.
     """
+    _db_names = (
+        "content", "children", "views", "unsynced_content", "unsynced_children", "unsynced_views", "buffer_to_node_id",
+        "node_to_buffer_id", "metadata", "bloom_filters", "parents", "inverted_views")
+    _env: Optional[Environment] = None
+
+    def __init__(self) -> None:
+        # Environment not initialized in class definition to prevent race with folder creation
+        if Database._env is None:
+            Database._env = lmdb.open(DB_FOLDER.as_posix(), max_dbs=len(Database._db_names))
 
     def __enter__(self) -> Cursors:
-        db_names = ("content", "children", "views", "unsynced_content", "unsynced_children", "unsynced_views",
-                    "buffer_to_node_id", "node_to_buffer_id", "metadata", "bloom_filters")
-        self.env = env = lmdb.open(DB_FOLDER.as_posix(), max_dbs=len(db_names))
-        self.txn = env.begin(write=True)
-        cursors = Cursors(**{db_name: self.sub_db(db_name) for db_name in db_names})
+        self.txn = self._env.begin(write=True)
+        cursors = Cursors(**{db_name: self.sub_db(db_name) for db_name in Database._db_names})
         return cursors
 
     def sub_db(self, db_name: str) -> lmdb.Cursor:
-        return self.txn.cursor(self.env.open_db(db_name.encode(), self.txn))
+        return self.txn.cursor(Database._env.open_db(db_name.encode(), self.txn))
 
     def __exit__(self, *args) -> None:
         self.txn.__exit__(*args)
-        self.env.__exit__(*args)
 
 
 def children_hash(children: set[NodeId]):
@@ -106,9 +112,9 @@ def content_hash(content_lines: list[str]):
     return sha256('\n'.join(content_lines).encode()).digest()
 
 
-def conflict(new_lines: list[str], old_lines: list[str], no_check: bool) -> list[str]:
+def conflict(new_lines: list[str], old_lines: list[str]) -> list[str]:
     return ["<<<<<<< OLD"] + old_lines + ["======="] + new_lines + [
-        ">>>>>>> NEW"] if no_check or new_lines != old_lines else new_lines
+        ">>>>>>> NEW"] if new_lines != old_lines else new_lines
 
 
 def get_key_val(key: Union[str, bytes], cursor: lmdb.Cursor) -> JSONType:
@@ -143,7 +149,7 @@ def buffer_to_node_id(buffer_id: BufferNodeId) -> Union[None, NodeId]:
 
 
 def get_id_line(line: str) -> tuple[NodeId, str]:
-    id_regex = compile(r"\[]\(q://(.+?)\) {2}")
+    id_regex = compile(r"\[]\(q://(.+?)\) {0,2}")
     id_match = id_regex.match(line)
     if id_match:
         line = line.removeprefix(id_match.group(0))
@@ -349,28 +355,36 @@ def ensure_root_node(cursors: Cursors) -> None:
         root_id = get_time_uuid()
         put_key_val(root_id, [''], cursors.content, False)
         put_key_val(root_id, [], cursors.children, False)
+        put_key_val(root_id, [], cursors.parents, False)
         put_key_val(ROOT_ID_KEY, root_id, cursors.metadata, False)
 
 
-def setup_repository(metadata_cursor: Cursor) -> None:
+repository_exists = Event()
+
+
+# @line_profiler_pycharm.profile
+def setup_repository(client_data: Client) -> None:
     try:
         run_git_cmd(["rev-parse", "--is-inside-work-tree"])
     except CalledProcessError:
         run_git_cmd(["init"])
         run_git_cmd(["checkout", "-b", GIT_BRANCH])
         try:
+            print("Pulling repository")
+            start_time = time()
             run_git_cmd(["pull", GIT_TOKEN_URL, GIT_BRANCH])
-        except CalledProcessError:
-            pass
+            print(f"Pull took {time() - start_time} seconds")
+        except CalledProcessError as e:
+            print(f"Can't fetch from {GIT_URL}:{GIT_BRANCH}\nError: {repr(e)}")
         gitattributes_path = GIT_FOLDER.joinpath(".gitattributes")
         if not gitattributes_path.exists():
             with open(gitattributes_path, 'x') as f:
                 f.write("*.md merge=union\n* text=auto eol=lf\n")
             run_git_cmd(["add", "-A"])
             run_git_cmd(["commit", "-m", "bootstrap"])
-        client_data = Client(**get_key_val(CLIENT_KEY, metadata_cursor))
         run_git_cmd(["config", "user.name", client_data["client_name"]])
         run_git_cmd(["config", "user.email", f"{client_data['client_id']}@q.client"])
+    repository_exists.set()
 
 
 symlinks_enabled = _check_symlinks_enabled()
@@ -394,30 +408,44 @@ def create_directory_if_absent(directory_path: Path):
             raise Exception(f"{directory_path} already exists as a file.")
 
 
-def resolve_main_id(buffer: Buffer, cursors: Cursors) -> NodeId:
+def buffer_inverted(buffer_name: str):
+    return basename(buffer_name)[0] == "~"
+
+
+def resolve_main_id(buffer: Buffer, cursors: Cursors) -> tuple[NodeId, bool]:
     file_name = basename(buffer.name)
+    inverted = buffer_inverted(buffer.name)
+    if inverted:
+        file_name = file_name[1:]
     try:
         main_id = name_to_node_id(file_name, '.q.md')
         if get_key_val(main_id, cursors.content) is None:
-            raise ValueError
+            raise ValueError(buffer.name)
     except ValueError:
         root_id = cast(NodeId, get_key_val(ROOT_ID_KEY, cursors.metadata))
         assert root_id
-        buffer.name = node_id_to_filename(root_id)
+        buffer.name = node_id_to_filepath(root_id, inverted)
         main_id = root_id
-    return main_id
+    return main_id, inverted
 
 
-def node_id_to_filename(root_id: NodeId) -> str:
-    return FILE_FOLDER.joinpath(node_id_to_hex(root_id) + ".q.md").as_posix()
+def node_id_to_filepath(root_id: NodeId, inverted) -> str:
+    file_name = node_id_to_hex(root_id) + ".q.md"
+    if inverted:
+        file_name = '~' + file_name
+    return FILE_FOLDER.joinpath(file_name).as_posix()
 
 
 def bootstrap() -> None:
-    create_directory_if_absent(APP_FOLDER_PATH)
-    create_directory_if_absent(FILE_FOLDER)
+    for path in (APP_FOLDER_PATH, FILE_FOLDER, GIT_FOLDER, DB_FOLDER):
+        create_directory_if_absent(path)
+    file_handler = RotatingFileHandler(filename=LOG_FILENAME, mode='w', maxBytes=512000, backupCount=4)
+    logger.addHandler(file_handler)
     with Database() as cursors:
         set_client_if_new(cursors.metadata)
-        setup_repository(cursors.metadata)
+        # Get client data early since cursors are invalid in thread
+        client_data = Client(**get_key_val(CLIENT_KEY, cursors.metadata))
+        Thread(target=lambda: setup_repository(client_data)).start()
         ensure_root_node(cursors)
 
 
@@ -516,3 +544,34 @@ def render_buffer(buffer: Buffer, new_content_lines: list[str], nvim: Nvim) -> l
 
 def normalized_prefixes(string: str):
     return {word[:3].casefold() for word in split(r'(\W)', string) if word and not word.isspace()}
+
+
+def merge_children_with_local(node_id: NodeId, new_children_ids: Iterable[NodeId], children_cur: Cursor) -> list[
+    NodeId]:
+    merged_children_ids = OrderedSet(get_key_val(node_id, children_cur))
+    merged_children_ids.update(new_children_ids)
+    return list(merged_children_ids)
+
+
+def merge_content_with_local(node_id: NodeId, new_content_lines: list[str], content_cur: Cursor) -> list[str]:
+    db_content_lines: list[str] = get_key_val(node_id, content_cur)
+    return conflict(new_content_lines, db_content_lines)
+
+
+def value_hash(key: str, cursor: Cursor) -> str:
+    data_bytes = cursor.get(key.encode())
+    return realtime_data_hash(data_bytes)
+
+
+def realtime_data_hash(data: Union[bytes, JSONType]) -> str:
+    return urlsafe_b64encode(sha256(data if isinstance(data, bytes) else dumps(data).encode()).digest()).decode()
+
+
+def sync_with_realtime_db(data: RealtimeData, realtime_session) -> None:
+    if realtime_session.others_online:
+        Thread(target=realtime_session.client_broadcast(data)).start()
+
+
+def remove_absent_keys(dictionary: Tree, keys: OrderedSet[NodeId]):
+    for key in dictionary.keys() - keys:
+        dictionary.pop(key)

@@ -14,15 +14,12 @@ pyrebase_config = {
     "measurementId": "G-BPNP22GS5X"
 }
 
-print("app")
 app = pyrebase.initialize_app(pyrebase_config)
-print("live")
 live = LiveData(app, '/')
-print("data")
 
-data = live.get_data()
-sub_data = data.get('test')
-print("test", data, sub_data)
+# data = live.get_data()
+# sub_data = data.get('test')
+# print("test", data, sub_data)
 
 
 def my_handler(sender, value, path):
@@ -32,6 +29,64 @@ def my_handler(sender, value, path):
 live.signal('/').connect(my_handler)
 while True:
     sleep(0.5)
+
+exit()
+
+
+"""
+r
+• flskdfjslkd
+    • hahalslskdfj laskdjflskdfjkk <DEL>
+        ‣ hahalslskdfj laskdjflskdfjkk
+        • hunl
+    • s
+        • flskdfjslkd
+            ‣ hahalslskdfj laskdjflskdfjkk
+            • s <s not detected as only child of parent to turn into ordered node len(children_ids/context > 1)>
+                ‣ flskdfjslkd
+• hahalslskdfj laskdjflskdfjkk
+    ‣ hahalslskdfj laskdjflskdfjkk
+    • hunl
+"""
+a = (
+['r',
+'- [](q://AXscAISsO2XA76YLPREb4A==)  flskdfjslkd',
+'        + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+'        - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl',
+'    1. [](q://AXscAKhyY7PmgFrSPY4n1A==)  s',
+'    1. [](q://AXscAISsO2XA76YLPREb4A==)  flskdfjslkd',
+'             + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+'             - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl',
+'        - [](q://AXscAKhyY7PmgFrSPY4n1A==)  s',
+'            + [](q://AXscAISsO2XA76YLPREb4A==)  flskdfjslkd',
+'                    + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+'                    - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl',
+'- [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+'    + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+'    - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl'],
+['r',
+'- [](q://AXscAISsO2XA76YLPREb4A==)  flskdfjslkd',
+'        + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+'        - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl',
+'    1. [](q://AXscAKhyY7PmgFrSPY4n1A==)  s',
+'    1. [](q://AXscAISsO2XA76YLPREb4A==)  flskdfjslkd',
+'             + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+'             - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl',
+'    1. [](q://AXscAKhyY7PmgFrSPY4n1A==)  s',
+'        + [](q://AXscAISsO2XA76YLPREb4A==)  flskdfjslkd',
+'                + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+'                - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl',
+'- [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+'    + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+'    - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl']
+)
+exit()
+from time import time
+
+from ntplib import NTPClient
+
+a = time()
+offset = NTPClient().request('pool.ntp.org')
 
 exit()
 from markdown_it import MarkdownIt

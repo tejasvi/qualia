@@ -12,4 +12,8 @@ base65536
 bloomfilter-py
 
 FirebaseData
-Pyrebase
+git+https://github.com/tejasvi/Pyrebase.git
+ntplib
+requests
+
+line-profiler-pycharm

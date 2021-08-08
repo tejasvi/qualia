@@ -1,6 +1,6 @@
 from collections import UserDict
 from dataclasses import dataclass
-from typing import NewType, Union, Any, TypedDict, Optional
+from typing import NewType, Union, Any, TypedDict, Optional, Callable
 
 from lmdb import Cursor
 from orderedset import OrderedSet
@@ -26,7 +26,7 @@ class View:
 class ProcessState:
     def __init__(self) -> None:
         self.changed_content_map: dict[NodeId, list[str]] = {}
-        self.changed_children_map: dict[NodeId, OrderedSet[str]] = {}
+        self.changed_children_map: dict[NodeId, OrderedSet[NodeId]] = {}
 
     def __bool__(self) -> bool:
         return bool(self.changed_children_map or self.changed_content_map)
@@ -69,6 +69,10 @@ class LastSeen(UserDict[NodeId, NodeData]):
         self.data.clear()
         self.line_info.clear()
 
+    def clear_except_main(self, node_id: NodeId):
+        self.data: dict[NodeId, NodeData] = {node_id: self.data.pop(node_id)}
+        self.line_info: dict[int, LineInfo] = {0: LineInfo(node_id, {node_id: {}})}
+
 
 JSONType = Union[str, int, float, bool, None, dict[str, Any], list[Any]]
 NODE_ID_ATTR = "node_id"
@@ -91,6 +95,22 @@ class Cursors:
 
     bloom_filters: Cursor
 
+    parents: Cursor
+    inverted_views: Cursor
+
 
 class NotNodeDirectory(Exception):
     """The directory is invalid node. Should contain README.md and name should be hex encoded UUID"""
+
+
+ConflictHandlerData = Union[list[str], Union[list[str], list[NodeId]]]
+ConflictHandler = Callable[[NodeId, ConflictHandlerData, Cursor], ConflictHandlerData]
+
+RealtimeChildrenData = dict[NodeId, tuple[str, list[NodeId]]]
+RealtimeContentData = dict[NodeId, tuple[str, list[str]]]
+
+
+class RealtimeData(TypedDict, total=False):
+    children: RealtimeChildrenData
+    content: RealtimeContentData
+    client_id: str

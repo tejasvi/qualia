@@ -3,7 +3,10 @@ from pathlib import Path
 from subprocess import check_call, CalledProcessError
 from sys import executable, argv
 
+import line_profiler_pycharm
 from pkg_resources import working_set
+
+from qualia.realtime import Realtime
 
 FZF_DELIMITER = "\t"
 
@@ -39,7 +42,7 @@ from qualia.search import matching_nodes_content
 from qualia.sync import sync_buffer
 from qualia.utils import Database, put_key_val, get_uuid, set_client_if_new, name_to_node_id, get_key_val, \
     resolve_main_id, \
-    bootstrap, node_id_to_filename, normalized_prefixes
+    bootstrap, node_id_to_filepath, normalized_prefixes, buffer_inverted
 
 GIT_FLAG_ARG = "git"
 
@@ -49,6 +52,7 @@ class Qualia:
     def __init__(self, nvim: Nvim):
         bootstrap()
         self.nvim = nvim
+        self.realtime_session = Realtime()
         self.count = 0
         self.autocmd = None
         self.clone_ns = self.nvim.funcs.nvim_create_namespace("clones")
@@ -69,19 +73,24 @@ class Qualia:
              allow_nested=False,
              eval=None)
     def auto_main(self, *_args) -> None:
-        # return
+        return
         self.autocmd = True
         try:
+            if not self.should_continue():
+                return
             self.main(None)
         except Exception as e:
-            self.nvim.err_write('\n'.join(traceback.format_exception(None, e, e.__traceback__)))
+            self.nvim.err_write(
+                "Something went wrong :(\n" + '\n'.join(traceback.format_exception(None, e, e.__traceback__)))
 
     @function("NavigateNode", sync=True)
-    def navigate_node(self, *args, node_id: Optional[NodeId] = None) -> None:
-        self.log(args)
+    def navigate_node(self, *args, node_id: Optional[NodeId]) -> None:
         if node_id is None:
             node_id = self.line_info(self.current_line_number()).node_id
-        self.nvim.current.buffer.name = node_id_to_filename(node_id)
+        inverted = buffer_inverted(self.nvim.current.buffer.name)
+        filepath = node_id_to_filepath(node_id, inverted)
+        if self.nvim.current.buffer.name != filepath:
+            self.nvim.current.buffer.name = filepath
 
     @function("HoistNode", sync=True)
     def hoist_node(self, *_args) -> None:
@@ -90,20 +99,21 @@ class Qualia:
         self.log(view)
         self.main(view)
 
-    @function("Expand", sync=True)
-    def expand(self, *_args) -> None:
+    @function("Toggle", sync=True)
+    def toggle(self, *_args, expand_collapse: Optional[bool] = None) -> None:
         cur_line_info = self.line_info(self.current_line_number())
-        if cur_line_info.context[cur_line_info.node_id] is None:
-            cur_line_info.context[cur_line_info.node_id] = {}
-        main_view = self.line_node_view(0)
-        self.main(main_view)
+        expanded = cur_line_info.context[cur_line_info.node_id] is not None
+        if expand_collapse is None:
+            expand_collapse = not expanded
+        if expanded != expand_collapse:
+            cur_line_info.context[cur_line_info.node_id] = {} if expand_collapse else None
+            view = self.line_node_view(0)
+            self.main(view)
 
-    @function("Collapse", sync=True)
-    def collapse(self, *_args) -> None:
-        cur_line_info = self.line_info(self.current_line_number())
-        cur_line_info.context[cur_line_info.node_id] = None
-        main_view = self.line_node_view(0)
-        self.main(main_view)
+    @function("Invert", sync=True)
+    def invert(self, *_args) -> None:
+        node_id = self.line_info(self.current_line_number()).node_id
+        self.nvim.current.buffer.name = node_id_to_filepath(node_id, True)
 
     fzf_sink_function = "NodeFzfSink"
 
@@ -112,12 +122,8 @@ class Qualia:
         self.autocmd = True
         for selected in selections:
             node_id = NodeId(selected[:selected.index(FZF_DELIMITER)])
-            # self.log(node_id, node_id_to_filename(node_id), selected, "haha")
-            self.nvim.command(f"edit {node_id_to_filename(node_id)}")
-
-    @command("Test")
-    def f(self) -> None:
-        self.nvim.current.line = "hello"
+            # self.log(node_id, node_id_to_filepath(node_id), selected, "haha")
+            self.nvim.command(f"edit {node_id_to_filepath(node_id, False)}")
 
     @function("SearchNodes", sync=True)
     def search_nodes(self, query_strings: list[str]) -> None:
@@ -128,27 +134,30 @@ class Qualia:
                        {'source': fzf_lines, 'sink': self.fzf_sink_function, 'window': {'width': 0.9, 'height': 0.9},
                         'options': ['--delimiter', FZF_DELIMITER, '--with-nth', '2..', '--nth', '2..']})
 
+    # @line_profiler_pycharm.profile
     def main(self, view: Optional[View]) -> None:
-        if view is None:
-            if not self.should_continue():
-                return
-        else:
-            self.navigate_node(node_id=view.main_id)
-
         buffer: Buffer = self.nvim.current.buffer
         self.delete_highlights(buffer.number)
+
         with Database() as cursors:
-            main_id = resolve_main_id(buffer, cursors)
+            main_id, inverted = resolve_main_id(buffer, cursors)
+            if view and main_id != view.main_id:
+                self.navigate_node(node_id=view.main_id)
+
             buffer_id = self.current_buffer_id()
+            last_seen = self.buffer_last_seen[buffer_id]
+
             try:
-                root_view = sync_buffer(list(buffer), main_id, self.buffer_last_seen[buffer_id], cursors)
+                root_view = view or sync_buffer(list(buffer), main_id, last_seen, cursors,
+                                                inverted, self.realtime_session)
             except DuplicateNodeException as exp:
                 self.handle_duplicate_node(buffer, exp)
             except UncertainNodeChildrenException as exp:
-                self.handle_uncertain_node_children(buffer, exp)
+                self.handle_uncertain_node_children(buffer, exp, main_id, last_seen)
             else:
-                self.buffer_last_seen[buffer_id] = render(view or root_view, buffer, self.nvim, cursors)
+                self.buffer_last_seen[buffer_id] = render(root_view, buffer, self.nvim, cursors, inverted)
                 self.nvim.command("set write | write")
+                self.changedtick[buffer_id] = self.nvim.eval("b:changedtick")
 
         # sync_with_git()
         # if time() - self.last_git_sync > 15:
@@ -178,6 +187,8 @@ class Qualia:
         if self.nvim.funcs.mode().startswith("i"):
             return
 
+        if not self.should_continue():
+            return
         self.main(None)
 
     def delete_highlights(self, buffer_numer) -> None:
@@ -206,11 +217,15 @@ class Qualia:
 
         return True
 
-    def handle_uncertain_node_children(self, buffer: Buffer, exp: UncertainNodeChildrenException):
+    def handle_uncertain_node_children(self, buffer: Buffer, exp: UncertainNodeChildrenException, main_id: NodeId,
+                                       last_seen: LastSeen):
         self.nvim.command("set nowrite")
         self.log(f"Node children uncertain. Manual save required, {exp.node_id}, {exp.line_range}")
         for line_num in range(exp.line_range[0], exp.line_range[1]):
             self.nvim.funcs.nvim_buf_add_highlight(buffer.number, self.clone_ns, "ErrorMsg", line_num, 0, -1)
+        if self.nvim.funcs.confirm("Current state is uncertain. Default: Skip", "&Skip parsing\n&Force parse", 1) == 2:
+            last_seen.clear_except_main(main_id)
+            self.main(None)
 
     def handle_duplicate_node(self, buffer: Buffer, exp: DuplicateNodeException):
         self.nvim.command("set nowrite")
@@ -231,7 +246,6 @@ if __name__ == "__main__":
     if len(argv) >= 2 and argv[1] == GIT_FLAG_ARG:
         sync_with_git()
     else:
-        bootstrap()
         snvim = attach('socket', path=r'\\.\pipe\nvim-15600-0')  # path=environ['NVIM_LISTEN_ADDRESS'])
         q = Qualia(snvim)
         while True:
@@ -500,4 +514,8 @@ For search, create bloom (or cuckoo) filter for each node.
                 Then pipe the node content to fzf
 firestore for realtime
 git for syncing
+TODO:
+    :call setline('.', substitute(getline('.'), '\%2c.', 'a', ''))
+    Useful when creating new node and prevent odd cursor movement.
+        Linelevel difflib
 """
