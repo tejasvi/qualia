@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 from _sha256 import sha256
 from base64 import urlsafe_b64encode, urlsafe_b64decode
 from difflib import SequenceMatcher
 from hashlib import sha256
+from itertools import zip_longest
 from json import loads, dumps
 from logging import getLogger
 from logging.handlers import RotatingFileHandler
@@ -14,27 +17,26 @@ from subprocess import run, CalledProcessError
 from tempfile import gettempdir
 from threading import Thread, Event
 from time import time_ns, sleep, time
-from typing import Callable, Union, Iterable, cast, TextIO, Optional
+from typing import Callable, Union, Iterable, cast, TextIO, Optional, Iterator
 from uuid import uuid4, UUID
 
 import lmdb
-from lmdb import Cursor
-from lmdb.cpython import Environment
+from lmdb import Cursor, Environment
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 from markdown_it.tree import SyntaxTreeNode
-from orderedset._orderedset import OrderedSet
+from orderedset import OrderedSet
 from pynvim import Nvim
 from pynvim.api import Buffer
 
 from qualia.config import DB_FOLDER, LEVEL_SPACES, EXPANDED_BULLET, COLLAPSED_BULLET, TO_EXPAND_BULLET, GIT_FOLDER, \
     ROOT_ID_KEY, APP_FOLDER_PATH, FILE_FOLDER, GIT_BRANCH, CLIENT_KEY, LOG_FILENAME, CONTENT_CHILDREN_SEPARATOR_LINES, \
-    GIT_TOKEN_URL, GIT_SEARCH_URL, GIT_URL
+    GIT_TOKEN_URL, GIT_SEARCH_URL, GIT_URL, DEBUG
 from qualia.models import Client, NodeData, RealtimeData
 from qualia.models import NodeId, JSONType, BufferNodeId, NODE_ID_ATTR, Tree, Cursors, UncertainNodeChildrenException, \
     LastSeen, DuplicateNodeException
 
-_md_parser = MarkdownIt().parse
+_md_parser = MarkdownIt("zero", {"maxNesting": 1e2}).enable(["link", "list", "code", "fence", "html_block"]).parse
 
 logger = getLogger("qualia")
 
@@ -66,7 +68,7 @@ def get_node_id() -> NodeId:
     return node_id
 
 
-def batch_undo(nvim: Nvim):
+def batch_undo(nvim: Nvim) -> Iterator[None]:
     first_change = True
     while True:
         if first_change:
@@ -90,7 +92,7 @@ class Database:
     def __init__(self) -> None:
         # Environment not initialized in class definition to prevent race with folder creation
         if Database._env is None:
-            Database._env = lmdb.open(DB_FOLDER.as_posix(), max_dbs=len(Database._db_names))
+            Database._env = lmdb.open(DB_FOLDER.as_posix(), max_dbs=len(Database._db_names), map_size=1e9)
 
     def __enter__(self) -> Cursors:
         self.txn = self._env.begin(write=True)
@@ -152,7 +154,7 @@ def get_id_line(line: str) -> tuple[NodeId, str]:
     id_regex = compile(r"\[]\(q://(.+?)\) {0,2}")
     id_match = id_regex.match(line)
     if id_match:
-        line = line.removeprefix(id_match.group(0))
+        line = removeprefix(line, id_match.group(0))
         buffer_node_id = BufferNodeId(id_match.group(1))
         node_id = buffer_to_node_id(buffer_node_id)
     else:
@@ -215,19 +217,38 @@ def merge_sibling_lists_ignore_bullets(child_list_asts: list[SyntaxTreeNode]) ->
     merged_child_asts: list[SyntaxTreeNode] = []
     for cur_child_list_ast in child_list_asts:
         cur_type = cur_child_list_ast.type
-        if cur_type == last_type:
+        if cur_type == last_type or (cur_type.endswith("_list") and last_type and last_type.endswith("_list")):
             last_child_list_ast = merged_child_asts[-1]
-            last_child_list_ast.children.extend(cur_child_list_ast.children)
+            last_nester_tokens = last_child_list_ast.nester_tokens
 
-            token_obj = last_child_list_ast.token or last_child_list_ast.nester_tokens.opening
+            token_obj = last_child_list_ast.token or last_nester_tokens.opening
             token_obj.map = last_child_list_ast.map[0], cur_child_list_ast.map[1]
+
+            if cur_type == 'ordered_list' and last_type == "bullet_list":
+                copy_list_ast_type(last_child_list_ast, cur_child_list_ast)
+
+            last_child_list_ast.children.extend(cur_child_list_ast.children)
 
             for child_ast in cur_child_list_ast.children:
                 child_ast.parent = last_child_list_ast
+
         else:
             merged_child_asts.append(cur_child_list_ast)
         last_type = cur_type
     return merged_child_asts
+
+
+def copy_list_ast_type(target_list_ast: SyntaxTreeNode, source_list_ast: SyntaxTreeNode) -> None:
+    # skip since markup used for finding indent
+    # list_markup = source_list_ast.children[0].nester_tokens.closing.markup
+    # for child_ast in target_list_ast.children:
+    #     child_ast.nester_tokens.closing.markup = child_ast.nester_tokens.opening.markup = list_markup
+
+    target_list_ast.nester_tokens.opening.type = source_list_ast.nester_tokens.opening.type
+    target_list_ast.nester_tokens.closing.type = source_list_ast.nester_tokens.closing.type
+
+    target_list_ast.nester_tokens.opening.tag = source_list_ast.nester_tokens.opening.tag
+    target_list_ast.nester_tokens.closing.tag = source_list_ast.nester_tokens.closing.tag
 
 
 def preserve_expand_consider_sub_tree(list_item_ast: SyntaxTreeNode, node_id: NodeId, sub_list_tree: Tree,
@@ -274,9 +295,9 @@ def _check_symlinks_enabled() -> bool:
             symlink_dest.unlink()
         except FileExistsError:
             continue
-        except OSError:
+        except (NotImplementedError, OSError):
             return False
-        src.unlink(src)
+        src.unlink()
         return True
 
 
@@ -324,9 +345,22 @@ def is_valid_uuid(string: str) -> bool:
     return True
 
 
+# pre 3.9 str.removeprefix
+def removesuffix(input_string: str, suffix: str) -> str:
+    if suffix and input_string.endswith(suffix):
+        return input_string[:-len(suffix)]
+    return input_string
+
+
+def removeprefix(input_string: str, suffix: str) -> str:
+    if suffix and input_string.startswith(suffix):
+        return input_string[len(suffix):]
+    return input_string
+
+
 def name_to_node_id(name: str, remove_suffix: str) -> NodeId:
     if name.endswith(remove_suffix):
-        node_id_hex = name.removesuffix(remove_suffix)
+        node_id_hex = removesuffix(name, remove_suffix)
     else:
         raise ValueError
     node_id = NodeId(urlsafe_b64encode(UUID(node_id_hex).bytes).decode())
@@ -408,25 +442,8 @@ def create_directory_if_absent(directory_path: Path):
             raise Exception(f"{directory_path} already exists as a file.")
 
 
-def buffer_inverted(buffer_name: str):
+def buffer_inverted(buffer_name: str) -> bool:
     return basename(buffer_name)[0] == "~"
-
-
-def resolve_main_id(buffer: Buffer, cursors: Cursors) -> tuple[NodeId, bool]:
-    file_name = basename(buffer.name)
-    inverted = buffer_inverted(buffer.name)
-    if inverted:
-        file_name = file_name[1:]
-    try:
-        main_id = name_to_node_id(file_name, '.q.md')
-        if get_key_val(main_id, cursors.content) is None:
-            raise ValueError(buffer.name)
-    except ValueError:
-        root_id = cast(NodeId, get_key_val(ROOT_ID_KEY, cursors.metadata))
-        assert root_id
-        buffer.name = node_id_to_filepath(root_id, inverted)
-        main_id = root_id
-    return main_id, inverted
 
 
 def node_id_to_filepath(root_id: NodeId, inverted) -> str:
@@ -509,37 +526,98 @@ def create_markdown_file(cursors: Cursors, node_id: NodeId) -> list[NodeId]:
     return node_children_ids
 
 
+def get_replace_buffer_line(nvim: Nvim) -> Callable[[int, Union[str, list[str]]], None]:
+    setline = nvim.funcs.setline
+
+    def replace_buffer_line(zero_indexed: int, content: Union[str, list[str]]) -> None:
+        assert setline(zero_indexed + 1, content) == 0
+
+    return replace_buffer_line
+
+
 def render_buffer(buffer: Buffer, new_content_lines: list[str], nvim: Nvim) -> list[str]:
     old_content_lines = list(buffer)
-    undojoin = batch_undo(nvim)
+    # Pre-Check common state with == (100x faster than loop)
+    if old_content_lines != new_content_lines:
+        line_num = 0
+        for line_num, (old_line, new_line) in enumerate(zip(old_content_lines, new_content_lines)):
+            if old_line != new_line:
+                break
+
+        undojoin = batch_undo(nvim)
+        next(undojoin)
+
+        set_buffer_line = get_replace_buffer_line(nvim)
+
+        line_new_end, line_old_end = different_item_from_end(new_content_lines, old_content_lines, line_num)
+
+        if line_num in (line_old_end, line_new_end):
+            if line_num == line_old_end:
+                set_buffer_line(line_num, new_content_lines[line_num])
+                buffer[line_num + 1:line_num + 1] = new_content_lines[line_num + 1:line_new_end + 1]
+            else:
+                set_buffer_line(line_num, new_content_lines[line_num])
+                del buffer[line_num + 1:line_old_end + 1]
+        else:
+            if (len(old_content_lines) - line_num) * (len(new_content_lines) - line_num) > 1e5:
+                buffer[line_num:] = new_content_lines[line_num:]
+            else:
+                print("Surgical")
+                surgical_render(buffer, new_content_lines, set_buffer_line, old_content_lines, undojoin)
+    if DEBUG:
+        try:
+            assert new_content_lines == list(buffer)
+        except AssertionError:
+            buffer[:] = old_content_lines
+            render_buffer(buffer, new_content_lines, nvim)
+    return old_content_lines
+
+
+def surgical_render(buffer: Buffer, new_content_lines: list[str], replace_buffer_line: Callable[[int, Union[str, list[str]]], None],
+                    old_content_lines: list[str], undojoin: Iterator) -> None:
     offset = 0
     for opcode, old_i1, old_i2, new_i1, new_i2 in SequenceMatcher(a=old_content_lines, b=new_content_lines,
                                                                   autojunk=False).get_opcodes():
+        if opcode == "equal":
+            continue
+        next(undojoin)
         if opcode == "replace":
             num_old_lines = old_i2 - old_i1
             num_new_lines = new_i2 - new_i1
             min_lines = min(num_old_lines, num_new_lines)
             # setline preserves the marks unlike buffer[lnum] = "content"
-            next(undojoin)
-            assert nvim.funcs.setline(min(old_i1 + offset, len(buffer)) + 1,
-                                      new_content_lines[new_i1:new_i1 + min_lines]) == 0
-            if num_new_lines > num_old_lines:
+            replace_buffer_line(min(old_i1 + offset, len(buffer)), new_content_lines[new_i1:new_i1 + min_lines])
+            if num_new_lines != num_old_lines:
                 next(undojoin)
-                idx = old_i1 + min_lines + offset
-                buffer[idx:idx] = new_content_lines[new_i1 + min_lines: new_i2]
-            elif num_new_lines < num_old_lines:
-                next(undojoin)
-                del buffer[old_i1 + min_lines + offset:old_i2 + offset]
+                if num_new_lines > num_old_lines:
+                    idx = old_i1 + min_lines + offset
+                    buffer[idx:idx] = new_content_lines[new_i1 + min_lines: new_i2]
+                elif num_new_lines < num_old_lines:
+                    del buffer[old_i1 + min_lines + offset:old_i2 + offset]
             offset += num_new_lines - num_old_lines
         elif opcode == "insert":
-            next(undojoin)
             buffer[old_i1 + offset:old_i1 + offset] = new_content_lines[new_i1:new_i2]
             offset += new_i2 - new_i1
         elif opcode == "delete":
-            next(undojoin)
             del buffer[old_i1 + offset:old_i2 + offset]
             offset -= old_i2 - old_i1
-    return old_content_lines
+
+
+def different_item_from_end(list1: list, list2: list, minimum_idx: int) -> tuple[int, int]:
+    len1 = len(list1)
+    len2 = len(list2)
+    maximum_idx_rev = min(len1 - minimum_idx, len2 - minimum_idx) - 1
+
+    for i_rev, (item1, item2) in enumerate(zip(reversed(list1), reversed(list2))):
+        if item1 != item2 or i_rev == maximum_idx_rev:
+            break
+    else:
+        raise ValueError("Lists are same")
+
+    idx1 = len(list1) - i_rev - 1
+    idx2 = len(list2) - i_rev - 1
+
+    return idx1, idx2
 
 
 def normalized_prefixes(string: str):
@@ -575,3 +653,14 @@ def sync_with_realtime_db(data: RealtimeData, realtime_session) -> None:
 def remove_absent_keys(dictionary: Tree, keys: OrderedSet[NodeId]):
     for key in dictionary.keys() - keys:
         dictionary.pop(key)
+
+
+def resolve_main_id(buffer_name: str, cursors: Cursors) -> tuple[NodeId, bool]:
+    file_name = basename(buffer_name)
+    inverted = buffer_inverted(buffer_name)
+    if inverted:
+        file_name = file_name[1:]
+    main_id = name_to_node_id(file_name, '.q.md')
+    if get_key_val(main_id, cursors.content) is None:
+        raise ValueError(buffer_name)
+    return main_id, inverted

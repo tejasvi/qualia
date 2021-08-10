@@ -1,18 +1,27 @@
+from __future__ import annotations
+from os import chmod
 from pathlib import Path
 from shutil import rmtree
+from stat import S_IWRITE
 
 from appdirs import user_data_dir
 
-DEBUG = False
+DEBUG = True
 
 data_dir = user_data_dir("qualianotes", "qualia")
-if True or DEBUG:
+if DEBUG:
     data_dir += '_debug'
 
 APP_FOLDER_PATH = Path(data_dir)
 
-if True or DEBUG:
-    rmtree(APP_FOLDER_PATH, ignore_errors=True)
+if DEBUG:
+    def onerror(func, path, exc_info):
+        if exc_info[0] is FileNotFoundError:
+            pass
+        else:
+            chmod(path, S_IWRITE)
+            func(path)
+    rmtree(APP_FOLDER_PATH, onerror=onerror)
 
 FILE_FOLDER = APP_FOLDER_PATH.joinpath("files")
 

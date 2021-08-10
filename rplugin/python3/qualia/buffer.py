@@ -1,12 +1,13 @@
+from __future__ import annotations
 from itertools import zip_longest
-from typing import Union
+from typing import Union, Iterator
 
 from markdown_it.tree import SyntaxTreeNode
 from orderedset import OrderedSet
 
 from qualia.models import NodeId, View, ProcessState, NODE_ID_ATTR, Tree, LastSeen, BufferNodeId
 from qualia.utils import get_md_ast, conflict, get_id_line, raise_if_duplicate_sibling, \
-    get_ast_sub_lists, preserve_expand_consider_sub_tree
+    get_ast_sub_lists, preserve_expand_consider_sub_tree, removeprefix
 
 
 class Process:
@@ -24,14 +25,14 @@ class Process:
         buffer_tree: Tree = {}  # {node_id: {child_1: {..}, child_2: {..}, ..}}
 
         buffer_ast = get_md_ast(lines)
-        self._process_list_item_ast(buffer_ast, buffer_tree, [], last_seen)
+        self._process_list_item_ast(buffer_ast, buffer_tree, iter([]), last_seen)
 
         data = buffer_tree.popitem()
         root_view = View(*data)
         return root_view, self._changes
 
     def _process_list_item_ast(self, list_item_ast: SyntaxTreeNode, tree: Tree,
-                               ordered_child_asts: list[SyntaxTreeNode], last_seen: LastSeen):
+                               ordered_child_asts: Iterator[SyntaxTreeNode], last_seen: LastSeen):
         is_buffer_ast = list_item_ast.type == 'root'
         content_start_line_num = list_item_ast.map[0]
         content_indent = 0 if is_buffer_ast else self._lines[content_start_line_num].index(
@@ -41,12 +42,14 @@ class Process:
         list_item_ast.meta[NODE_ID_ATTR] = node_id
 
         sub_lists = get_ast_sub_lists(list_item_ast)
+        sub_list_tree = self._process_list_item_asts(sub_lists, last_seen)
+        try:
+            first_ordered_child_ast = next(ordered_child_asts)
+            self._process_list_item_ast(first_ordered_child_ast, sub_list_tree, ordered_child_asts, last_seen)
+        except StopIteration:
+            pass
 
         content_end_line_num = sub_lists[0].map[0] if sub_lists else list_item_ast.map[1]
-
-        sub_list_tree = self._process_list_item_asts(sub_lists, last_seen)
-        if ordered_child_asts:
-            self._process_list_item_ast(ordered_child_asts[0], sub_list_tree, ordered_child_asts[1:], last_seen)
 
         raise_if_duplicate_sibling(list_item_ast, node_id, tree)
 
@@ -55,7 +58,7 @@ class Process:
         tree[node_id] = sub_list_tree if expand else None
 
         content_lines = [id_line] + [
-            line.removeprefix(" " * content_indent)
+            removeprefix(line," " * content_indent)
             for line in self._lines[content_start_line_num + 1: content_end_line_num]
         ]
 
@@ -80,10 +83,10 @@ class Process:
                 token_obj.map = child_list_item_ast.map[0], item_end_line
 
                 if not ordered_list:
-                    self._process_list_item_ast(child_list_item_ast, sub_list_tree, [], last_seen)
+                    self._process_list_item_ast(child_list_item_ast, sub_list_tree, iter([]), last_seen)
 
             if ordered_list:
-                self._process_list_item_ast(children_asts[0], sub_list_tree, later_children_asts, last_seen)
+                self._process_list_item_ast(children_asts[0], sub_list_tree, iter(later_children_asts), last_seen)
         return sub_list_tree
 
     def _process_node(self, node_id: NodeId, content_lines: list[str], children_ids: Union[None, OrderedSet],

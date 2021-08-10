@@ -1,19 +1,15 @@
-black
-pycrunch-trace
-yappi
-
+pynvim
 
 markdown-it-py[plugins]
 lmdb
-pynvim
 appdirs
 orderedset
 base65536
 bloomfilter-py
 
-FirebaseData
+typing-extensions
+
 git+https://github.com/tejasvi/Pyrebase.git
+FirebaseData
 ntplib
 requests
-
-line-profiler-pycharm

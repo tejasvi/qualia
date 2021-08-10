@@ -1,3 +1,4 @@
+from __future__ import annotations
 from threading import Thread, Event
 from time import sleep, time
 from typing import Optional
@@ -76,7 +77,6 @@ class Realtime:
                 sleep(1)
 
     def _broadcast_handler(self, _sender: FirebaseData, value: RealtimeData, **_path) -> None:
-        print(value)
         with Database() as cursors:
             if value["client_id"] == self.client_id:
                 return
