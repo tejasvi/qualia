@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from os import chmod
 from pathlib import Path
 from shutil import rmtree
@@ -14,13 +15,15 @@ if DEBUG:
 
 APP_FOLDER_PATH = Path(data_dir)
 
-if DEBUG:
+if False and DEBUG:
     def onerror(func, path, exc_info):
         if exc_info[0] is FileNotFoundError:
             pass
         else:
             chmod(path, S_IWRITE)
             func(path)
+
+
     rmtree(APP_FOLDER_PATH, onerror=onerror)
 
 FILE_FOLDER = APP_FOLDER_PATH.joinpath("files")

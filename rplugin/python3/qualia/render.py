@@ -1,4 +1,8 @@
 from __future__ import annotations
+
+from sys import setrecursionlimit, getrecursionlimit
+from typing import Optional
+
 from orderedset import OrderedSet
 from pynvim import Nvim
 from pynvim.api import Buffer
@@ -9,38 +13,51 @@ from qualia.models import NodeId, View, NodeData, Tree, LastSeen, Cursors, LineI
 from qualia.utils import get_key_val, content_lines_to_buffer_lines, render_buffer
 
 
-def render(root_view: View, buffer: Buffer, nvim: Nvim, cursors: Cursors, inverted: bool) -> LastSeen:
-    new_last_seen, new_content_lines = get_buffer_lines_from_view(root_view, cursors, inverted)
+def render(root_view: View, buffer: Buffer, nvim: Nvim, cursors: Cursors, inverted: bool, fold_level: int) -> LastSeen:
+    new_last_seen, new_content_lines = get_buffer_lines_from_view(root_view, cursors, inverted, fold_level)
     old_content_lines = render_buffer(buffer, new_content_lines, nvim)
 
-    if DEBUG:
+    while True:
         try:
-            new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.main_id,
-                                                                 new_last_seen)
-            assert (not new_changes or (nvim.err_write(str(new_changes)) and False))
-            re_last_seen, re_content_lines = get_buffer_lines_from_view(new_root_view, cursors, inverted)
-            assert (new_content_lines == re_content_lines) or (
-                    nvim.err_write('\n'.join(new_content_lines + ['<TO>'] + re_content_lines)) and False)
-        except Exception as exp:
-            for _ in range(100):
-                new_root_view, new_changes = Process().process_lines(old_content_lines.copy(), root_view.main_id,
-                                                                     new_last_seen)
-                new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.main_id,
-                                                                     new_last_seen)
-                re_last_seen, re_content_lines = get_buffer_lines_from_view(new_root_view, cursors, inverted)
-            raise exp
+            if DEBUG:
+                try:
+                    new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.main_id,
+                                                                         new_last_seen)
+                    assert (not new_changes or (nvim.err_write(str(new_changes)) and False))
+                    re_last_seen, re_content_lines = get_buffer_lines_from_view(new_root_view, cursors, inverted,
+                                                                                fold_level)
+                    assert (new_content_lines == re_content_lines) or (
+                            nvim.err_write('\n'.join(new_content_lines + ['<TO>'] + re_content_lines)) and False)
+                except Exception as exp:
+                    for _ in range(100):
+                        new_root_view, new_changes = Process().process_lines(old_content_lines.copy(),
+                                                                             root_view.main_id,
+                                                                             new_last_seen)
+                        new_root_view, new_changes = Process().process_lines(new_content_lines.copy(),
+                                                                             root_view.main_id,
+                                                                             new_last_seen)
+                        re_last_seen, re_content_lines = get_buffer_lines_from_view(new_root_view, cursors, inverted,
+                                                                                    fold_level)
+                    raise exp
 
-        # nvim.err_write(str((new_content_lines, old_content_lines)))
-        print(new_content_lines, old_content_lines)
+                # nvim.err_write(str((new_content_lines, old_content_lines)))
+                print(new_content_lines, old_content_lines)
+            break
+        except RecursionError:
+            if nvim.funcs.confirm("Too many nodes open. Expect slowdown on older machines. Continue?", "&Yes\n&Cancel",
+                                  2) == 2:
+                return LastSeen()
+            setrecursionlimit(getrecursionlimit() * 2)
     return new_last_seen
 
 
-def get_buffer_lines_from_view(view: View, cursors: Cursors, inverted: bool) -> tuple[LastSeen, list[str]]:
+def get_buffer_lines_from_view(view: View, cursors: Cursors, inverted: bool, fold_level: Optional[int]) -> tuple[
+    LastSeen, list[str]]:
     last_seen = LastSeen()
     buffer_lines: list[str] = []
-    stack: list[tuple[NodeId, Tree, int, bool]] = [(view.main_id, {view.main_id: view.sub_tree}, -1, False)]
+    stack: list[tuple[NodeId, Tree, int, int, bool]] = [(view.main_id, {view.main_id: view.sub_tree}, -1, 0, False)]
     while stack:
-        cur_node_id, context, previous_level, previously_ordered = stack.pop()
+        cur_node_id, context, previous_indent_level, nest_level, previously_ordered = stack.pop()
 
         content_lines = get_key_val(cur_node_id, cursors.content)
         if content_lines is None:
@@ -54,11 +71,19 @@ def get_buffer_lines_from_view(view: View, cursors: Cursors, inverted: bool) -> 
         last_seen.line_info[len(buffer_lines)] = LineInfo(cur_node_id, context)
 
         buffer_children_context = context[cur_node_id]
+        if fold_level is not None:
+            if buffer_children_context is None:
+                if nest_level < fold_level:
+                    buffer_children_context = {}
+            else:
+                if nest_level == fold_level:
+                    buffer_children_context = None
 
         expanded = not children_ids or buffer_children_context is not None
-        ordered = expanded and ((len(children_ids) == 1) or previously_ordered) and previous_level >= 0 and len(
+
+        ordered = expanded and ((len(children_ids) == 1) or previously_ordered) and previous_indent_level >= 0 and len(
             context) == 1
-        current_level = previous_level if (ordered and previously_ordered) else previous_level + 1
+        current_indent_level = previous_indent_level if (ordered and previously_ordered) else previous_indent_level + 1
 
         if buffer_children_context is not None:
             # if children_context is None:
@@ -72,8 +97,8 @@ def get_buffer_lines_from_view(view: View, cursors: Cursors, inverted: bool) -> 
             # if not children_context:
             #     children_context = {child_id: None for child_id in children_ids}
             for child_node_id in reversed(children_ids):  # sorted(children_ids, reverse=True):
-                stack.append((child_node_id, children_context, current_level, ordered))
+                stack.append((child_node_id, children_context, current_indent_level, nest_level + 1, ordered))
 
-        buffer_lines += content_lines_to_buffer_lines(content_lines, cur_node_id, current_level, expanded, ordered)
+        buffer_lines += content_lines_to_buffer_lines(content_lines, cur_node_id, current_indent_level, expanded, ordered)
 
     return last_seen, buffer_lines or ['']

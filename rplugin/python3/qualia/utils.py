@@ -4,10 +4,8 @@ from _sha256 import sha256
 from base64 import urlsafe_b64encode, urlsafe_b64decode
 from difflib import SequenceMatcher
 from hashlib import sha256
-from itertools import zip_longest
 from json import loads, dumps
 from logging import getLogger
-from logging.handlers import RotatingFileHandler
 from os import symlink
 from os.path import basename
 from pathlib import Path
@@ -30,15 +28,19 @@ from pynvim import Nvim
 from pynvim.api import Buffer
 
 from qualia.config import DB_FOLDER, LEVEL_SPACES, EXPANDED_BULLET, COLLAPSED_BULLET, TO_EXPAND_BULLET, GIT_FOLDER, \
-    ROOT_ID_KEY, APP_FOLDER_PATH, FILE_FOLDER, GIT_BRANCH, CLIENT_KEY, LOG_FILENAME, CONTENT_CHILDREN_SEPARATOR_LINES, \
+    ROOT_ID_KEY, APP_FOLDER_PATH, FILE_FOLDER, GIT_BRANCH, CLIENT_KEY, CONTENT_CHILDREN_SEPARATOR_LINES, \
     GIT_TOKEN_URL, GIT_SEARCH_URL, GIT_URL, DEBUG
 from qualia.models import Client, NodeData, RealtimeData
 from qualia.models import NodeId, JSONType, BufferNodeId, NODE_ID_ATTR, Tree, Cursors, UncertainNodeChildrenException, \
     LastSeen, DuplicateNodeException
 
-_md_parser = MarkdownIt("zero", {"maxNesting": 1e2}).enable(["link", "list", "code", "fence", "html_block"]).parse
+_md_parser = MarkdownIt("zero", {"maxNesting": float('inf')}).enable(
+    ["link", "list", "code", "fence", "html_block"]).parse
 
 logger = getLogger("qualia")
+
+
+# logger.setLevel(logging.DEBUG)
 
 
 def get_md_ast(content_lines: list[str]) -> SyntaxTreeNode:
@@ -92,7 +94,7 @@ class Database:
     def __init__(self) -> None:
         # Environment not initialized in class definition to prevent race with folder creation
         if Database._env is None:
-            Database._env = lmdb.open(DB_FOLDER.as_posix(), max_dbs=len(Database._db_names), map_size=1e9)
+            Database._env = lmdb.open(DB_FOLDER.as_posix(), max_dbs=len(Database._db_names), map_size=2 ** 20)
 
     def __enter__(self) -> Cursors:
         self.txn = self._env.begin(write=True)
@@ -197,6 +199,7 @@ def raise_if_duplicate_sibling(list_item_ast: SyntaxTreeNode, node_id: NodeId, t
 
 def get_ast_sub_lists(list_item_ast: SyntaxTreeNode) -> list[
     SyntaxTreeNode]:  # TODO: Merge two loops, line range updation here instead of process list asts?
+    # FIX: Can't call twice -> reduce to one node
     child_list_asts = []
     if list_item_ast.children:
         cur_child_list_ast = list_item_ast.children[-1]
@@ -280,7 +283,7 @@ def preserve_expand_consider_sub_tree(list_item_ast: SyntaxTreeNode, node_id: No
 def run_git_cmd(arguments: list[str]) -> str:
     result = run(["git"] + arguments, check=True, cwd=GIT_FOLDER, capture_output=True)
     stdout = '\n'.join([stream.decode() for stream in (result.stdout, result.stderr)]).strip()
-    logger.debug(f"GIT:\n{stdout}\n")
+    logger.critical(f"GIT:\n{stdout}\n")
     return stdout
 
 
@@ -430,8 +433,8 @@ def set_client_if_new(metadata_cursor: Cursor):
         put_key_val(CLIENT_KEY, client_details, metadata_cursor, False)
 
 
-def node_id_to_hex(node_id) -> str:
-    return str(UUID(urlsafe_b64decode(node_id).hex()))
+def node_id_to_hex(node_id: NodeId) -> str:
+    return str(UUID(bytes=urlsafe_b64decode(node_id)))
 
 
 def create_directory_if_absent(directory_path: Path):
@@ -456,8 +459,9 @@ def node_id_to_filepath(root_id: NodeId, inverted) -> str:
 def bootstrap() -> None:
     for path in (APP_FOLDER_PATH, FILE_FOLDER, GIT_FOLDER, DB_FOLDER):
         create_directory_if_absent(path)
-    file_handler = RotatingFileHandler(filename=LOG_FILENAME, mode='w', maxBytes=512000, backupCount=4)
-    logger.addHandler(file_handler)
+    # file_handler = RotatingFileHandler(filename=LOG_FILENAME, mode='w', maxBytes=512000, backupCount=4)
+    # logger.addHandler(file_handler)
+    logger.critical("STARTING")
     with Database() as cursors:
         set_client_if_new(cursors.metadata)
         # Get client data early since cursors are invalid in thread
@@ -573,7 +577,8 @@ def render_buffer(buffer: Buffer, new_content_lines: list[str], nvim: Nvim) -> l
     return old_content_lines
 
 
-def surgical_render(buffer: Buffer, new_content_lines: list[str], replace_buffer_line: Callable[[int, Union[str, list[str]]], None],
+def surgical_render(buffer: Buffer, new_content_lines: list[str],
+                    replace_buffer_line: Callable[[int, Union[str, list[str]]], None],
                     old_content_lines: list[str], undojoin: Iterator) -> None:
     offset = 0
     for opcode, old_i1, old_i2, new_i1, new_i2 in SequenceMatcher(a=old_content_lines, b=new_content_lines,
@@ -646,8 +651,11 @@ def realtime_data_hash(data: Union[bytes, JSONType]) -> str:
 
 
 def sync_with_realtime_db(data: RealtimeData, realtime_session) -> None:
-    if realtime_session.others_online:
-        Thread(target=realtime_session.client_broadcast(data)).start()
+    if data and realtime_session.others_online:
+        def broadcast_closure() -> None:
+            realtime_session.client_broadcast(data)
+
+        Thread(target=broadcast_closure).start()
 
 
 def remove_absent_keys(dictionary: Tree, keys: OrderedSet[NodeId]):
@@ -655,12 +663,12 @@ def remove_absent_keys(dictionary: Tree, keys: OrderedSet[NodeId]):
         dictionary.pop(key)
 
 
-def resolve_main_id(buffer_name: str, cursors: Cursors) -> tuple[NodeId, bool]:
+def resolve_main_id(buffer_name: str, content_cursor: Cursor) -> tuple[NodeId, bool]:
     file_name = basename(buffer_name)
     inverted = buffer_inverted(buffer_name)
     if inverted:
         file_name = file_name[1:]
     main_id = name_to_node_id(file_name, '.q.md')
-    if get_key_val(main_id, cursors.content) is None:
+    if get_key_val(main_id, content_cursor) is None:
         raise ValueError(buffer_name)
     return main_id, inverted

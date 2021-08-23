@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from time import sleep
 
 import pyrebase
@@ -18,6 +19,7 @@ pyrebase_config = {
 app = pyrebase.initialize_app(pyrebase_config)
 live = LiveData(app, '/')
 
+
 # data = live.get_data()
 # sub_data = data.get('test')
 # print("test", data, sub_data)
@@ -32,7 +34,6 @@ while True:
     sleep(0.5)
 
 exit()
-
 
 """
 r
@@ -50,36 +51,36 @@ r
     • hunl
 """
 a = (
-['r',
-'- [](q://AXscAISsO2XA76YLPREb4A==)  flskdfjslkd',
-'        + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
-'        - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl',
-'    1. [](q://AXscAKhyY7PmgFrSPY4n1A==)  s',
-'    1. [](q://AXscAISsO2XA76YLPREb4A==)  flskdfjslkd',
-'             + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
-'             - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl',
-'        - [](q://AXscAKhyY7PmgFrSPY4n1A==)  s',
-'            + [](q://AXscAISsO2XA76YLPREb4A==)  flskdfjslkd',
-'                    + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
-'                    - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl',
-'- [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
-'    + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
-'    - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl'],
-['r',
-'- [](q://AXscAISsO2XA76YLPREb4A==)  flskdfjslkd',
-'        + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
-'        - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl',
-'    1. [](q://AXscAKhyY7PmgFrSPY4n1A==)  s',
-'    1. [](q://AXscAISsO2XA76YLPREb4A==)  flskdfjslkd',
-'             + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
-'             - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl',
-'    1. [](q://AXscAKhyY7PmgFrSPY4n1A==)  s',
-'        + [](q://AXscAISsO2XA76YLPREb4A==)  flskdfjslkd',
-'                + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
-'                - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl',
-'- [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
-'    + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
-'    - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl']
+    ['r',
+     '- [](q://AXscAISsO2XA76YLPREb4A==)  flskdfjslkd',
+     '        + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+     '        - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl',
+     '    1. [](q://AXscAKhyY7PmgFrSPY4n1A==)  s',
+     '    1. [](q://AXscAISsO2XA76YLPREb4A==)  flskdfjslkd',
+     '             + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+     '             - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl',
+     '        - [](q://AXscAKhyY7PmgFrSPY4n1A==)  s',
+     '            + [](q://AXscAISsO2XA76YLPREb4A==)  flskdfjslkd',
+     '                    + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+     '                    - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl',
+     '- [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+     '    + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+     '    - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl'],
+    ['r',
+     '- [](q://AXscAISsO2XA76YLPREb4A==)  flskdfjslkd',
+     '        + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+     '        - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl',
+     '    1. [](q://AXscAKhyY7PmgFrSPY4n1A==)  s',
+     '    1. [](q://AXscAISsO2XA76YLPREb4A==)  flskdfjslkd',
+     '             + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+     '             - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl',
+     '    1. [](q://AXscAKhyY7PmgFrSPY4n1A==)  s',
+     '        + [](q://AXscAISsO2XA76YLPREb4A==)  flskdfjslkd',
+     '                + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+     '                - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl',
+     '- [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+     '    + [](q://AXscD4GbNBsRZE7dzbDcKw==)  hahalslskdfj [laskdjf](hlsdjf)lskdfjkk',
+     '    - [](q://AXscEFdpN-rYaoHtv7yEHA==)  hunl']
 )
 exit()
 from time import time

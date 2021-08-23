@@ -1,18 +1,22 @@
 from __future__ import annotations
+
 import traceback
 from os.path import basename
 from pathlib import Path
 from subprocess import check_call, CalledProcessError
-from sys import executable, argv
+from sys import executable, argv, setrecursionlimit, getrecursionlimit
 
+from lmdb import Cursor
 from pkg_resources import working_set
 
+NVIM_PIPE = r'\\.\pipe\nvim-15600-0'
 
 FZF_DELIMITER = "\t"
 
 
 def install_dependencies() -> None:
-    required = {'lmdb', 'orderedset', 'markdown-it-py', 'appdirs', 'base65536', 'pynvim', 'bloomfilter-py', 'typing-extensions'}
+    required = {'lmdb', 'orderedset', 'markdown-it-py', 'appdirs', 'base65536', 'pynvim', 'bloomfilter-py',
+                'typing-extensions'}
     installed = {pkg.key for pkg in working_set}
     for package in required - installed:
         install_command = [executable, "-m", "pip", "install", package]
@@ -33,7 +37,7 @@ from typing import Any, Optional, cast
 from pynvim import plugin, Nvim, function, attach, command, autocmd
 from pynvim.api import Buffer
 
-from qualia.config import DB_FOLDER, LEVEL_SPACES, ROOT_ID_KEY, APP_FOLDER_PATH
+from qualia.config import DB_FOLDER, LEVEL_SPACES, ROOT_ID_KEY, APP_FOLDER_PATH, LOG_FILENAME
 from qualia.git import sync_with_git
 from qualia.models import DuplicateNodeException, NodeId, BufferNodeId, LastSeen, UncertainNodeChildrenException, \
  \
@@ -49,7 +53,11 @@ GIT_FLAG_ARG = "git"
 
 @plugin
 class Qualia:
-    def __init__(self, nvim: Nvim):
+    def __init__(self, nvim: Nvim, ide: bool = False):
+
+        self.ide_debug = nvim.eval('v:servername') == NVIM_PIPE
+        if self.ide_debug and not ide:
+            exit()
         bootstrap()
         self.nvim = nvim
         self.realtime_session = Realtime()
@@ -73,18 +81,17 @@ class Qualia:
              allow_nested=False,
              eval=None)
     def auto_main(self, *_args) -> None:
-        # return
         self.autocmd = True
         try:
             if not self.should_continue():
                 return
-            self.main(None)
+            self.main(None, None)
         except Exception as e:
             self.nvim.err_write(
                 "Something went wrong :(\n" + '\n'.join(traceback.format_exception(None, e, e.__traceback__)))
 
     @function("NavigateNode", sync=True)
-    def navigate_node(self, *args, node_id: Optional[NodeId] = None) -> None:
+    def navigate_node(self, node_id: Optional[NodeId] = None) -> None:
         if node_id is None:
             node_id = self.line_info(self.current_line_number()).node_id
         inverted = buffer_inverted(self.nvim.current.buffer.name)
@@ -100,7 +107,7 @@ class Qualia:
         line_num = self.current_line_number()
         view = self.line_node_view(line_num)
         self.log(view)
-        self.main(view)
+        self.main(view, None)
 
     @function("Toggle", sync=True)
     def toggle(self, *_args, should_expand: Optional[bool] = None) -> None:
@@ -112,7 +119,13 @@ class Qualia:
             cur_line_info.context[cur_line_info.node_id] = (
                     cur_line_info.context[cur_line_info.node_id] or {}) if should_expand else None
             view = self.line_node_view(0)
-            self.main(view)
+            self.main(view, None)
+
+    @function("FoldN", sync=True)
+    def fold_n(self, args: list) -> None:
+        fold_level = args[0]
+        assert fold_level > 0
+        self.main(None, fold_level)
 
     @function("Invert", sync=True)
     def invert(self, *_args) -> None:
@@ -138,33 +151,48 @@ class Qualia:
         self.log(query_strings, prefixes, fzf_lines)
         self.nvim.call("fzf#run",
                        {'source': fzf_lines, 'sink': self.fzf_sink_function, 'window': {'width': 0.9, 'height': 0.9},
-                        'options': ['--delimiter', FZF_DELIMITER, '--with-nth', '2..']}) #, '--nth', '2..'
+                        'options': ['--delimiter', FZF_DELIMITER, '--with-nth', '2..']})  # , '--nth', '2..'
 
-    def main(self, view: Optional[View]) -> None:
+    def main(self, view: Optional[View], fold_level: Optional[int]) -> None:
         t = time()
         trigger_buffer: Buffer = self.nvim.current.buffer
         self.delete_highlights(trigger_buffer.number)
 
         with Database() as cursors:
-            current_buffer, inverted, main_id = self.resolve_filepath(trigger_buffer, cursors, view)
+            inverted, main_id = self.navigate_filepath(trigger_buffer.name, cursors, view)
 
+            current_buffer = self.nvim.current.buffer
             buffer_id = self.current_buffer_id()
             if buffer_id is None:
                 return
             last_seen = self.buffer_last_seen[buffer_id]
 
+            initial_time = time()
+            initial_time_diff = time() - t
+
             try:
-                root_view = view or sync_buffer(list(current_buffer), main_id, last_seen, cursors,
-                                                inverted, self.realtime_session)
+                while True:
+                    try:
+                        root_view = view or sync_buffer(list(current_buffer), main_id, last_seen, cursors,
+                                                        inverted, self.realtime_session)
+                        sync_time = time()
+                        sync_time_diff = time() - initial_time
+                        break
+                    except RecursionError:
+                        if self.nvim.funcs.confirm("Too many nodes open. Expect crash on weak hardware. Continue?",
+                                                   "&No\n&Yes", 1) == 1:
+                            return
+                        setrecursionlimit(getrecursionlimit() * 2)
             except DuplicateNodeException as exp:
                 self.handle_duplicate_node(current_buffer, exp)
             except UncertainNodeChildrenException as exp:
                 self.handle_uncertain_node_children(current_buffer, exp, main_id, last_seen)
             else:
-                self.buffer_last_seen[buffer_id] = render(root_view, current_buffer, self.nvim, cursors, inverted)
-                t = time()-t
-                if t > 0.1:
-                    self.log("TOOK", t)
+                self.buffer_last_seen[buffer_id] = render(root_view, current_buffer, self.nvim, cursors, inverted,
+                                                          fold_level)
+                l = time() - t
+                if l > 0.1:
+                    self.log("TOOK", l, initial_time_diff, sync_time_diff, time() - sync_time)
                 self.nvim.command("silent set write | silent update")
                 self.changedtick[buffer_id] = self.nvim.eval("b:changedtick")
 
@@ -173,20 +201,20 @@ class Qualia:
         #     Popen([executable, __file__, GIT_FLAG_ARG], start_new_session=True)
         #     self.last_git_sync = time()
 
-    def resolve_filepath(self, buffer, cursors, view) -> tuple[Buffer, bool, NodeId]:
+    def navigate_filepath(self, buffer_name: str, cursors: Cursors, view) -> tuple[bool, NodeId]:
         try:
-            main_id, inverted = resolve_main_id(buffer.name, cursors)
+            main_id, inverted = resolve_main_id(buffer_name, cursors.content)
         except ValueError:
-            main_id, inverted = self.navigate_root_node(buffer.name, cursors)
-            buffer = self.nvim.current.buffer
+            main_id, inverted = self.navigate_root_node(buffer_name, cursors.metadata)
         if view and main_id != view.main_id:
-            self.navigate_node(node_id=view.main_id)
-        return buffer, inverted, main_id
+            self.navigate_node(view.main_id)
+        return inverted, main_id
 
-    def navigate_root_node(self, buffer_name: str, cursors: Cursors) -> tuple[NodeId, bool]:
+    def navigate_root_node(self, buffer_name: str, metadata_cursor: Cursor) -> tuple[NodeId, bool]:
         inverted = buffer_inverted(basename(buffer_name))
-        root_id = cast(NodeId, get_key_val(ROOT_ID_KEY, cursors.metadata))
+        root_id = cast(NodeId, get_key_val(ROOT_ID_KEY, metadata_cursor))
         self.replace_with_file(node_id_to_filepath(root_id, inverted))
+        self.log("Redirecting to root node")
         return root_id, inverted
 
     def line_node_view(self, line_num) -> View:
@@ -207,7 +235,7 @@ class Qualia:
         self.autocmd = False
         if not self.should_continue():
             return
-        self.main(None)
+        self.main(None, None)
 
     def delete_highlights(self, buffer_numer) -> None:
         for ns_id in (self.clone_ns, self.duplicate_ns):
@@ -218,7 +246,11 @@ class Qualia:
             return False
 
         undotree = self.nvim.funcs.undotree()
-        if undotree["seq_cur"] < undotree["seq_last"]:# or undotree["synced"] == 0:
+
+        if self.ide_debug and undotree["synced"] == 0:
+            return False
+
+        if undotree["seq_cur"] < undotree["seq_last"]:
             return False
 
         buffer_id = self.current_buffer_id()
@@ -246,10 +278,10 @@ class Qualia:
         self.log(f"Node children uncertain. Manual save required, {exp.node_id}, {exp.line_range}")
         for line_num in range(exp.line_range[0], min(exp.line_range[1], exp.line_range[0] + 50)):
             self.nvim.funcs.nvim_buf_add_highlight(buffer.number, self.clone_ns, "ErrorMsg", line_num, 0, -1)
-        if self.nvim.funcs.confirm("Current state is uncertain. Default: Skip", "&Skip parsing\n&Force parse", 1) == 2:
+        if self.nvim.funcs.confirm("Current state is uncertain.", "&Skip parsing\n&Force parse", 1) == 2:
             # TODO: Replace below with saner version. Currently  below resets the view.
             last_seen.clear_except_main(main_id)
-            self.main(None)
+            self.main(None, None)
 
     def handle_duplicate_node(self, buffer: Buffer, exp: DuplicateNodeException):
         self.nvim.command("set nowrite")
@@ -259,7 +291,7 @@ class Qualia:
                 self.nvim.funcs.nvim_buf_add_highlight(buffer.number, self.clone_ns, "ErrorMsg", line_num, 0, -1)
 
     def current_buffer_id(self) -> Optional[BufferId]:
-        buffer_number:int = self.nvim.current.buffer.number
+        buffer_number: int = self.nvim.current.buffer.number
         try:
             file_path = self.nvim.eval("resolve(expand('%:p'))")
         except OSError:
@@ -275,8 +307,8 @@ if __name__ == "__main__":
     if len(argv) >= 2 and argv[1] == GIT_FLAG_ARG:
         sync_with_git()
     else:
-        snvim = attach('socket', path=r'\\.\pipe\nvim-15600-0')  # path=environ['NVIM_LISTEN_ADDRESS'])
-        q = Qualia(snvim)
+        snvim = attach('socket', path=NVIM_PIPE)  # path=environ['NVIM_LISTEN_ADDRESS'])
+        q = Qualia(snvim, True)
         while True:
             q.poll()
             sleep(0.01)

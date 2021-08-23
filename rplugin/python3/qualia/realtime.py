@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from threading import Thread, Event
 from time import sleep, time
 from typing import Optional

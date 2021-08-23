@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from itertools import zip_longest
 from typing import Union, Iterator
 
@@ -58,7 +59,7 @@ class Process:
         tree[node_id] = sub_list_tree if expand else None
 
         content_lines = [id_line] + [
-            removeprefix(line," " * content_indent)
+            removeprefix(line, " " * content_indent)
             for line in self._lines[content_start_line_num + 1: content_end_line_num]
         ]
 
