@@ -11,7 +11,8 @@ from os.path import basename
 from pathlib import Path
 from re import compile, search, split
 from secrets import token_urlsafe, token_bytes
-from subprocess import run, CalledProcessError
+from subprocess import run, CalledProcessError, check_call
+from sys import executable
 from tempfile import gettempdir
 from threading import Thread, Event
 from time import time_ns, sleep, time
@@ -625,7 +626,7 @@ def different_item_from_end(list1: list, list2: list, minimum_idx: int) -> tuple
     return idx1, idx2
 
 
-def normalized_prefixes(string: str):
+def normalized_prefixes(string: str) -> set[str]:
     return {word[:3].casefold() for word in split(r'(\W)', string) if word and not word.isspace()}
 
 
@@ -672,3 +673,13 @@ def resolve_main_id(buffer_name: str, content_cursor: Cursor) -> tuple[NodeId, b
     if get_key_val(main_id, content_cursor) is None:
         raise ValueError(buffer_name)
     return main_id, inverted
+
+
+def install_dependencies() -> None:
+    requirements_file_path = Path(__file__).parent.parent.joinpath("requirements.txt").as_posix()
+    install_command = [executable, "-m", "pip", "install", "-r", requirements_file_path]
+    try:
+        check_call(install_command)
+    except CalledProcessError as e:
+        print("ERROR: Can't install the packages in ", requirements_file_path)
+        raise e

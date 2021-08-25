@@ -1,4 +1,15 @@
-from __future__ import annotations
+from re import split
+
+
+def normalized_prefixes(string: str) -> set[str]:
+    return {word[:3].casefold() for word in split(r'(\W)', string) if word and not word.isspace()}
+
+
+x = normalized_prefixes('')
+pass
+
+exit()
+# from __future__ import annotations
 
 from time import sleep
 

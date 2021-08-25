@@ -57,3 +57,4 @@ FIREBASE_WEB_APP_CONFIG = {
     "appId": "1:707949243379:web:db239176c6738dc5578086",
     "measurementId": "G-BPNP22GS5X"
 }
+FZF_DELIMITER = "\t"

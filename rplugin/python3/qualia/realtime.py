@@ -3,18 +3,19 @@ from __future__ import annotations
 from threading import Thread, Event
 from time import sleep, time
 from typing import Optional
+from typing import TYPE_CHECKING
 
-import pyrebase
 from firebasedata import LiveData, FirebaseData
 from ntplib import NTPClient
-from pyrebase import pyrebase
-from pyrebase.pyrebase import Pyre
-from requests import HTTPError, ConnectionError
 
 from qualia.config import FIREBASE_WEB_APP_CONFIG
 from qualia.models import ConflictHandlerData, ConflictHandler, RealtimeData, NodeId
-from qualia.utils import Database, get_key_val, put_key_val, bootstrap
-from qualia.utils import merge_children_with_local, merge_content_with_local, value_hash, realtime_data_hash
+from qualia.utils import Database, get_key_val, put_key_val, bootstrap, merge_children_with_local, \
+    merge_content_with_local, value_hash, realtime_data_hash
+
+if TYPE_CHECKING:
+    from pyrebase.pyrebase import Pyre
+    from pyrebase import pyrebase
 
 CHILDREN_KEY = "children"
 CONTENT_KEY = "content"
@@ -31,6 +32,7 @@ class Realtime:
         Thread(target=self.initialize).start()
 
     def initialize(self) -> None:
+        from pyrebase import pyrebase
         while True:
             try:
                 app = pyrebase.initialize_app(FIREBASE_WEB_APP_CONFIG)
@@ -56,6 +58,7 @@ class Realtime:
         return int(self.offset_seconds + time())
 
     def _update_online_status(self) -> None:
+        from requests import HTTPError, ConnectionError  # Takes ~0.1s
         while True:
             cur_time_sec = self._accurate_seconds()
             try:

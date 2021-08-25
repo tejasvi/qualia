@@ -23,11 +23,14 @@ def render(root_view: View, buffer: Buffer, nvim: Nvim, cursors: Cursors, invert
                 try:
                     new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.main_id,
                                                                          new_last_seen)
-                    assert (not new_changes or (nvim.err_write(str(new_changes)) and False))
+                    assert (not new_changes or (nvim.err_write(str(new_changes)) and False)), (
+                    new_content_lines, new_changes)
                     re_last_seen, re_content_lines = get_buffer_lines_from_view(new_root_view, cursors, inverted,
                                                                                 fold_level)
                     assert (new_content_lines == re_content_lines) or (
-                            nvim.err_write('\n'.join(new_content_lines + ['<TO>'] + re_content_lines)) and False)
+                            nvim.err_write('\n'.join(
+                                new_content_lines + ['<TO>'] + re_content_lines)) and False), new_content_lines + [
+                        '<TO>'] + re_content_lines
                 except Exception as exp:
                     for _ in range(100):
                         new_root_view, new_changes = Process().process_lines(old_content_lines.copy(),
@@ -51,13 +54,14 @@ def render(root_view: View, buffer: Buffer, nvim: Nvim, cursors: Cursors, invert
     return new_last_seen
 
 
-def get_buffer_lines_from_view(view: View, cursors: Cursors, inverted: bool, fold_level: Optional[int]) -> tuple[
+def get_buffer_lines_from_view(buffer_view: View, cursors: Cursors, inverted: bool, fold_level: Optional[int]) -> tuple[
     LastSeen, list[str]]:
     last_seen = LastSeen()
     buffer_lines: list[str] = []
-    stack: list[tuple[NodeId, Tree, int, int, bool]] = [(view.main_id, {view.main_id: view.sub_tree}, -1, 0, False)]
+    stack: list[tuple[NodeId, Tree, int, int, bool]] = [(buffer_view.main_id, {
+        buffer_view.main_id: {} if buffer_view.sub_tree is None else buffer_view.sub_tree}, -1, 0, False)]
     while stack:
-        cur_node_id, context, previous_indent_level, nest_level, previously_ordered = stack.pop()
+        cur_node_id, context, previous_indent_level, cur_nest_level, previously_ordered = stack.pop()
 
         content_lines = get_key_val(cur_node_id, cursors.content)
         if content_lines is None:
@@ -71,12 +75,13 @@ def get_buffer_lines_from_view(view: View, cursors: Cursors, inverted: bool, fol
         last_seen.line_info[len(buffer_lines)] = LineInfo(cur_node_id, context)
 
         buffer_children_context = context[cur_node_id]
+
         if fold_level is not None:
             if buffer_children_context is None:
-                if nest_level < fold_level:
+                if cur_nest_level < fold_level:
                     buffer_children_context = {}
             else:
-                if nest_level == fold_level:
+                if cur_nest_level == fold_level:
                     buffer_children_context = None
 
         expanded = not children_ids or buffer_children_context is not None
@@ -86,19 +91,12 @@ def get_buffer_lines_from_view(view: View, cursors: Cursors, inverted: bool, fol
         current_indent_level = previous_indent_level if (ordered and previously_ordered) else previous_indent_level + 1
 
         if buffer_children_context is not None:
-            # if children_context is None:
-            #     children_context = {}
-            # else:
-            #     for child_id in children_context.keys() - children_ids:
-            #         children_context.pop(child_id)
             context[cur_node_id] = children_context = {child_id: buffer_children_context.get(child_id, None)
                                                        for child_id in children_ids}
-
-            # if not children_context:
-            #     children_context = {child_id: None for child_id in children_ids}
             for child_node_id in reversed(children_ids):  # sorted(children_ids, reverse=True):
-                stack.append((child_node_id, children_context, current_indent_level, nest_level + 1, ordered))
+                stack.append((child_node_id, children_context, current_indent_level, cur_nest_level + 1, ordered))
 
-        buffer_lines += content_lines_to_buffer_lines(content_lines, cur_node_id, current_indent_level, expanded, ordered)
+        buffer_lines += content_lines_to_buffer_lines(content_lines, cur_node_id, current_indent_level, expanded,
+                                                      ordered)
 
     return last_seen, buffer_lines or ['']
