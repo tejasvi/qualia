@@ -5,8 +5,7 @@ from logging import StreamHandler
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from secrets import token_urlsafe
-from subprocess import CalledProcessError, check_call
-from sys import executable
+from subprocess import CalledProcessError
 from threading import Thread
 from time import time
 from typing import cast
@@ -88,16 +87,6 @@ def setup_logger() -> None:
     for handler in (file_handler, StreamHandler()):
         logger.addHandler(handler)
     logger.critical("== STARTING on " + datetime.today().isoformat() + " ==")
-
-
-def install_dependencies() -> None:
-    requirements_file_path = Path(__file__).parent.parent.joinpath("requirements.txt").as_posix()
-    install_command = [executable, "-m", "pip", "install", "-r", requirements_file_path]
-    try:
-        check_call(install_command)
-    except CalledProcessError as e:
-        logger.critical("ERROR: Can't install the packages in ", requirements_file_path)
-        raise e
 
 
 def get_uuid() -> NodeId:

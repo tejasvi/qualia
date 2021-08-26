@@ -6,8 +6,6 @@ function! qualia#install()
     if !has("nvim")
 		echoerr "Please install latest nvim. See https://github.com/neovim/neovim/wiki/Installing-Neovim"
     endif
-    py3 from qualia.utils.init_utils import install_qualia_dependencies
-    py3 install_qualia_dependencies()
 	UpdateRemotePlugins
 	echomsg "Please restart"
 endfunction
