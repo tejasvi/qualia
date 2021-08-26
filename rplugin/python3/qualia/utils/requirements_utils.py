@@ -9,4 +9,4 @@ def install_qualia_dependencies() -> None:
     try:
         check_call(install_command)
     except CalledProcessError:
-        check_call(install_command + ["user"])
+        check_call(install_command + ["--user"])
