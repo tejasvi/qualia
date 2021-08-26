@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from threading import Thread, Event
 from time import sleep, time
-from typing import Optional
+from typing import Optional, Callable
 from typing import TYPE_CHECKING
 
 from firebasedata import LiveData, FirebaseData
@@ -10,8 +10,10 @@ from ntplib import NTPClient
 
 from qualia.config import FIREBASE_WEB_APP_CONFIG
 from qualia.models import ConflictHandlerData, ConflictHandler, RealtimeData, NodeId
-from qualia.utils import Database, get_key_val, put_key_val, bootstrap, merge_children_with_local, \
-    merge_content_with_local, value_hash, realtime_data_hash
+from qualia.utils.bootstrap_utils import bootstrap
+from qualia.utils.common_utils import Database, get_key_val, put_key_val, logger
+from qualia.utils.realtime_utils import value_hash, realtime_data_hash, merge_children_with_local, \
+    merge_content_with_local
 
 if TYPE_CHECKING:
     from pyrebase.pyrebase import Pyre
@@ -22,37 +24,43 @@ CONTENT_KEY = "content"
 
 
 class Realtime:
-    def __init__(self) -> None:
+    def __init__(self, sync_trigger: Callable) -> None:
+        self.sync_trigger = sync_trigger
         self.others_online: bool = False
         self.db: Optional[pyrebase.Database] = None
-        self.live: Optional[LiveData] = None
+        self.live_data: Optional[LiveData] = None
         self.client_id: Optional[str] = None
         self.offset_seconds: Optional[float] = None
         self.initialization_event = Event()
-        Thread(target=self.initialize).start()
+        Thread(target=self.initialize, name="InitRealtime").start()
 
     def initialize(self) -> None:
-        from pyrebase import pyrebase
+        with Database() as cursors:
+            self.client_id = get_key_val("client", cursors.metadata)["client_id"]
         while True:
             try:
-                app = pyrebase.initialize_app(FIREBASE_WEB_APP_CONFIG)
-                self.db = app.database()
-                self.live = live = LiveData(app, '/')
-                live.listen()
-                live.signal('/data').connect(self._broadcast_handler)
-                with Database() as cursors:
-                    self.client_id = get_key_val("client", cursors.metadata)["client_id"]
                 self.offset_seconds = NTPClient().request('pool.ntp.org').offset
-                Thread(target=self._update_online_status).start()
-                live.signal('/connections').connect(self._new_client_listener)
-                self.initialization_event.set()
-                break
+                self.connect_firebase()
             except ConnectionError as e:
-                print("Couldn't connect to firebase\n", e)
+                logger.critical("Couldn't connect to firebase\n", e)
                 sleep(5)
             except Exception as e:
-                print("Firebase error\n", e)
+                logger.critical("Firebase error\n", e)
                 break
+            else:
+                self.initialization_event.set()
+                break
+
+    def connect_firebase(self) -> None:
+        from pyrebase import pyrebase  # Blocks thread for a while
+        app = pyrebase.initialize_app(FIREBASE_WEB_APP_CONFIG)
+        self.live_data = live_data = LiveData(app, '/')
+        live_data.listen()
+        self.db = app.database()
+
+        live_data.signal('/data').connect(self._broadcast_listener)
+        live_data.signal('/connections').connect(self._new_client_listener)
+        Thread(target=self._update_online_status, name="UpdateOnline").start()
 
     def _accurate_seconds(self) -> int:
         return int(self.offset_seconds + time())
@@ -77,22 +85,23 @@ class Realtime:
                         break
                 else:
                     self.others_online = False
-                self.live.set_data(f'/connections/{self.client_id}', cur_time_sec)
+                self.live_data.set_data(f'/connections/{self.client_id}', cur_time_sec)
                 sleep(1)
 
-    def _broadcast_handler(self, _sender: FirebaseData, value: RealtimeData, **_path) -> None:
+    def _broadcast_listener(self, _sender: FirebaseData, value: RealtimeData, **_path) -> None:
+        if value["client_id"] == self.client_id:
+            return
+        logger.debug("signal", value)
+        conflicts: RealtimeData = {}
         with Database() as cursors:
-            if value["client_id"] == self.client_id:
-                return
-            print("signal", value)
-            conflicts: RealtimeData = {}
             if CHILDREN_KEY in value:
                 conflicts[CHILDREN_KEY] = Realtime._process_broadcast_data(value[CHILDREN_KEY], cursors.children,
                                                                            merge_children_with_local)
             if CONTENT_KEY in value:
                 conflicts[CONTENT_KEY] = Realtime._process_broadcast_data(value[CONTENT_KEY], cursors.content,
                                                                           merge_content_with_local)
-            self.client_broadcast(conflicts)
+        self.client_broadcast(conflicts)
+        # self.sync_trigger()
 
     @staticmethod
     def _process_broadcast_data(data_dict: dict[NodeId, tuple[str, ConflictHandlerData]], cursor,
@@ -111,7 +120,7 @@ class Realtime:
     def client_broadcast(self, data: RealtimeData):
         if data and self.initialization_event.wait(5):
             data["client_id"] = self.client_id
-            self.live.set_data('/data', data)
+            self.live_data.set_data('/data', data)
 
     def _new_client_listener(self, _sender: FirebaseData, value: dict[str, int], **_path) -> None:
         if value:

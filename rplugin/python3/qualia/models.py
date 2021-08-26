@@ -72,9 +72,8 @@ class LastSeen(UserDict, MutableMapping[NodeId, NodeData]):
         self.data.clear()
         self.line_info.clear()
 
-    def clear_except_main(self, node_id: NodeId):
-        self.data: Dict[NodeId, NodeData] = {node_id: self.data.pop(node_id)}
-        self.line_info: Dict[int, LineInfo] = {0: LineInfo(node_id, {node_id: {}})}
+    def pop_data(self, node_id: NodeId) -> None:
+        self.data.pop(node_id)
 
 
 JSONType = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
@@ -99,11 +98,7 @@ class Cursors:
     bloom_filters: Cursor
 
     parents: Cursor
-    inverted_views: Cursor
-
-
-class NotNodeDirectory(Exception):
-    """The directory is invalid node. Should contain README.md and name should be hex encoded UUID"""
+    transposed_views: Cursor
 
 
 ConflictHandlerData = Union[List[str], Union[List[str], List[NodeId]]]

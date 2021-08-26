@@ -7,9 +7,10 @@ from bloomfilter import BloomFilter
 from bloomfilter.bloomfilter_strategy import MURMUR128_MITZ_32
 from lmdb import Cursor
 
-from qualia.config import FZF_DELIMITER
+from qualia.config import _FZF_LINE_DELIMITER
 from qualia.models import NodeId
-from qualia.utils import Database, get_key_val, normalized_prefixes
+from qualia.utils.common_utils import Database, get_key_val
+from qualia.utils.search_utils import normalized_prefixes
 
 
 def save_bloom_filter(node_id: NodeId, content_lines: list[str], bloom_filters_cursor: Cursor):
@@ -37,4 +38,4 @@ def matching_nodes_content(search_keywords: Iterable[str]) -> list[str]:
 
 
 def fzf_input_line(node_id: NodeId, content: list[str]) -> str:
-    return FZF_DELIMITER.join([cast(str, node_id)] + content)
+    return _FZF_LINE_DELIMITER.join([cast(str, node_id)] + content)

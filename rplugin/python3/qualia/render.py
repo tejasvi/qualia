@@ -10,11 +10,13 @@ from pynvim.api import Buffer
 from qualia.buffer import Process
 from qualia.config import DEBUG
 from qualia.models import NodeId, View, NodeData, Tree, LastSeen, Cursors, LineInfo
-from qualia.utils import get_key_val, content_lines_to_buffer_lines, render_buffer
+from qualia.utils.common_utils import get_key_val, logger
+from qualia.utils.render_utils import render_buffer, content_lines_to_buffer_lines
 
 
-def render(root_view: View, buffer: Buffer, nvim: Nvim, cursors: Cursors, inverted: bool, fold_level: int) -> LastSeen:
-    new_last_seen, new_content_lines = get_buffer_lines_from_view(root_view, cursors, inverted, fold_level)
+def render(root_view: View, buffer: Buffer, nvim: Nvim, cursors: Cursors, transposed: bool,
+           fold_level: int) -> LastSeen:
+    new_last_seen, new_content_lines = get_buffer_lines_from_view(root_view, cursors, transposed, fold_level)
     old_content_lines = render_buffer(buffer, new_content_lines, nvim)
 
     while True:
@@ -24,8 +26,8 @@ def render(root_view: View, buffer: Buffer, nvim: Nvim, cursors: Cursors, invert
                     new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.main_id,
                                                                          new_last_seen)
                     assert (not new_changes or (nvim.err_write(str(new_changes)) and False)), (
-                    new_content_lines, new_changes)
-                    re_last_seen, re_content_lines = get_buffer_lines_from_view(new_root_view, cursors, inverted,
+                        new_content_lines, new_changes)
+                    re_last_seen, re_content_lines = get_buffer_lines_from_view(new_root_view, cursors, transposed,
                                                                                 fold_level)
                     assert (new_content_lines == re_content_lines) or (
                             nvim.err_write('\n'.join(
@@ -39,12 +41,12 @@ def render(root_view: View, buffer: Buffer, nvim: Nvim, cursors: Cursors, invert
                         new_root_view, new_changes = Process().process_lines(new_content_lines.copy(),
                                                                              root_view.main_id,
                                                                              new_last_seen)
-                        re_last_seen, re_content_lines = get_buffer_lines_from_view(new_root_view, cursors, inverted,
+                        re_last_seen, re_content_lines = get_buffer_lines_from_view(new_root_view, cursors, transposed,
                                                                                     fold_level)
                     raise exp
 
                 # nvim.err_write(str((new_content_lines, old_content_lines)))
-                print(new_content_lines, old_content_lines)
+                logger.debug(new_content_lines, old_content_lines)
             break
         except RecursionError:
             if nvim.funcs.confirm("Too many nodes open. Expect slowdown on older machines. Continue?", "&Yes\n&Cancel",
@@ -54,8 +56,9 @@ def render(root_view: View, buffer: Buffer, nvim: Nvim, cursors: Cursors, invert
     return new_last_seen
 
 
-def get_buffer_lines_from_view(buffer_view: View, cursors: Cursors, inverted: bool, fold_level: Optional[int]) -> tuple[
-    LastSeen, list[str]]:
+def get_buffer_lines_from_view(buffer_view: View, cursors: Cursors, transposed: bool, fold_level: Optional[int]) -> \
+        tuple[
+            LastSeen, list[str]]:
     last_seen = LastSeen()
     buffer_lines: list[str] = []
     stack: list[tuple[NodeId, Tree, int, int, bool]] = [(buffer_view.main_id, {
@@ -68,7 +71,7 @@ def get_buffer_lines_from_view(buffer_view: View, cursors: Cursors, inverted: bo
             continue
 
         children_ids: OrderedSet[NodeId] = OrderedSet(
-            get_key_val(cur_node_id, cursors.parents if inverted else cursors.children) or [])
+            get_key_val(cur_node_id, cursors.parents if transposed else cursors.children) or [])
 
         if cur_node_id not in last_seen:
             last_seen[cur_node_id] = NodeData(content_lines, frozenset(children_ids))

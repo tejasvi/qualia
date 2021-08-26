@@ -7,8 +7,9 @@ from markdown_it.tree import SyntaxTreeNode
 from orderedset import OrderedSet
 
 from qualia.models import NodeId, View, ProcessState, NODE_ID_ATTR, Tree, LastSeen, BufferNodeId
-from qualia.utils import get_md_ast, conflict, get_id_line, raise_if_duplicate_sibling, \
-    get_ast_sub_lists, preserve_expand_consider_sub_tree, removeprefix
+from qualia.utils.buffer_utils import get_md_ast, get_id_line, raise_if_duplicate_sibling, get_ast_sub_lists, \
+    preserve_expand_consider_sub_tree
+from qualia.utils.common_utils import removeprefix, conflict
 
 
 class Process:
