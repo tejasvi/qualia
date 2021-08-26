@@ -4,7 +4,6 @@ from typing import Optional
 
 from pynvim import plugin, Nvim, autocmd, command, attach
 
-from qualia import start_time
 from qualia.config import _FZF_LINE_DELIMITER, NVIM_DEBUG_PIPE
 from qualia.driver import NvimDriver
 from qualia.models import NodeId
@@ -12,6 +11,7 @@ from qualia.search import matching_nodes_content
 from qualia.sync import save_root_view
 from qualia.utils.bootstrap_utils import bootstrap
 from qualia.utils.common_utils import Database
+from qualia.utils.perf_utils import start_time
 from qualia.utils.search_utils import normalized_prefixes
 
 
