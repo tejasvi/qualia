@@ -13,7 +13,7 @@ class ProcessException(Exception):
 
 
 def cmd(*args, **kwargs) -> None:
-    res = run(*args, **kwargs)
+    res = run(*args, **kwargs, capture_output=True)
     if res.returncode:
         raise ProcessException(res.returncode, str(args) + str(kwargs), res.stdout, res.stderr)
 
