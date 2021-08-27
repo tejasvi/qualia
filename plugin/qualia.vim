@@ -8,7 +8,7 @@ function! qualia#install()
     endif
 	UpdateRemotePlugins " Install missing packages
 	UpdateRemotePlugins
-	echomsg "Try nvim .q.md"
+	echomsg "Run nvim .q.md"
 endfunction
 command! -nargs=0 QualiaInstall call qualia#install()
 
