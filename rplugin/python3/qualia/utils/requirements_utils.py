@@ -1,4 +1,4 @@
-from os import environ, name
+from os import environ, name, pathsep
 from pathlib import Path
 from subprocess import check_call, CalledProcessError, run
 from sys import executable
@@ -28,4 +28,5 @@ def install_qualia_dependencies(optional_install_dir: str) -> None:
             except CalledProcessError:
                 pass
             check_call(default_python + install_command[1:],
-                       env=dict(environ, PIP_TARGET=optional_install_dir))
+                       env=dict(environ, PIP_TARGET=optional_install_dir,
+                                PYTHONPATH=environ["PYTHONPATH"] + pathsep + optional_install_dir))
