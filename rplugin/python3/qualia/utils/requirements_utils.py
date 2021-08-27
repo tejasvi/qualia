@@ -1,6 +1,6 @@
 from os import environ, name, pathsep
 from pathlib import Path
-from subprocess import check_call, CalledProcessError, run
+from subprocess import CalledProcessError, run, check_output
 from sys import executable
 
 
@@ -8,9 +8,13 @@ def get_location(exe_name: str) -> str:
     return run(['where' if name == 'nt' else 'which', exe_name], capture_output=True, text=True).stdout.rstrip('\n')
 
 
+def cmd(*args, **kwargs) -> None:
+    print(check_output(*args, **kwargs).stdout)
+
+
 def install_qualia_dependencies(optional_install_dir: str) -> None:
     try:
-        check_call([executable, "-m", "ensurepip", "--default-pip"])
+        cmd([executable, "-m", "ensurepip", "--default-pip"])
     except CalledProcessError:
         pass
 
@@ -21,19 +25,19 @@ def install_qualia_dependencies(optional_install_dir: str) -> None:
 
     try:
         for command in (init_command, install_command):
-            check_call(command + ["--user"])
+            cmd(command + ["--user"])
     except CalledProcessError:
         try:
             for command in (init_command, install_command):
-                check_call(command)
+                cmd(command)
         except CalledProcessError:
             default_python = [get_location("py"), "-3"] if name == 'nt' else [get_location("python3")]
             try:
-                check_call(default_python + ["-m", "ensurepip", "--default-pip"])
+                cmd(default_python + ["-m", "ensurepip", "--default-pip"])
             except CalledProcessError:
                 pass
             env = dict(environ, PIP_TARGET=optional_install_dir,
                        PYTHONPATH=(environ["PYTHONPATH"] + pathsep + optional_install_dir
                                    ) if "PYTHONPATH" in environ else optional_install_dir)
             for command in (init_command, install_command):
-                check_call(default_python + command[1:], env=env)
+                cmd(default_python + command[1:], env=env)
