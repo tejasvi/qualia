@@ -1,11 +1,14 @@
 from os import environ, name
 from pathlib import Path
-from subprocess import check_call, CalledProcessError
+from subprocess import check_call, CalledProcessError, run
 from sys import executable
 
 
+def get_location(exe_name: str) -> str:
+    return run(['where' if name == 'nt' else 'which', exe_name], capture_output=True, text=True).stdout
+
+
 def install_qualia_dependencies(optional_install_dir: str) -> None:
-    python_name = ["py", "-3"] if name == 'nt' else ["python3"]
     try:
         check_call([executable, "-m", "ensurepip", "--default-pip"])
     except CalledProcessError:
@@ -19,9 +22,10 @@ def install_qualia_dependencies(optional_install_dir: str) -> None:
         try:
             check_call(install_command)
         except CalledProcessError:
+            default_python = [get_location("py"), "-3"] if name == 'nt' else [get_location("python3")]
             try:
-                check_call(python_name + ["-m", "ensurepip", "--default-pip"])
+                check_call(default_python + ["-m", "ensurepip", "--default-pip"])
             except CalledProcessError:
                 pass
-            check_call(python_name + install_command[1:],
+            check_call(default_python + install_command[1:],
                        env=dict(environ, PIP_TARGET=optional_install_dir))
