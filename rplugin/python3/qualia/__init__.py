@@ -10,3 +10,4 @@ except (ModuleNotFoundError, ImportError):
 
     install_qualia_dependencies(optional_install_dir)
     from qualia.commands import Qualia
+path.remove(optional_install_dir)
