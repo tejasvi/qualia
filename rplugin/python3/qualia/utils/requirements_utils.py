@@ -15,7 +15,7 @@ class ProcessException(Exception):
 def cmd(*args, **kwargs) -> None:
     res = run(*args, **kwargs, capture_output=True)
     if res.returncode:
-        raise ProcessException(res.returncode, str(args) + str(kwargs), res.stdout, res.stderr)
+        raise ProcessException(res.returncode, (str(args) + str(kwargs))[20:], res.stdout, res.stderr)
 
 
 def install_qualia_dependencies(optional_install_dir: str) -> None:
@@ -45,5 +45,9 @@ def install_qualia_dependencies(optional_install_dir: str) -> None:
             env = dict(environ, PIP_TARGET=optional_install_dir,
                        PYTHONPATH=(environ["PYTHONPATH"] + pathsep + optional_install_dir
                                    ) if "PYTHONPATH" in environ else optional_install_dir)
-            for command in (init_command, install_command):
-                cmd(default_python + command[1:], env=env)
+            try:
+                for command in (init_command, install_command):
+                    cmd(default_python + command[1:], env=env)
+            except ProcessException:
+                for pkg in (["setuptools", "wheel"], ["-r", requirements_file_path]):
+                    cmd([get_location("pip"), "install"] + pkg, env=env)
