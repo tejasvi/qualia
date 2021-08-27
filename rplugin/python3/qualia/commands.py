@@ -2,7 +2,7 @@ from time import time, sleep
 from traceback import format_exception
 from typing import Optional
 
-from pynvim import plugin, Nvim, autocmd, command, attach
+from pynvim import plugin, Nvim, autocmd, command, attach, function
 
 from qualia.config import _FZF_LINE_DELIMITER, NVIM_DEBUG_PIPE
 from qualia.driver import NvimDriver
@@ -94,9 +94,9 @@ class Qualia(NvimDriver):
         else:
             self.replace_with_file(self.node_id_to_filepath(node_id, not currently_transposed), replace_buffer)
 
-    fzf_sink_function = "NodeFzfSink"
+    fzf_sink_command = "NodeFzfSink"
 
-    @command(fzf_sink_function, nargs=1, sync=True)
+    @command(fzf_sink_command, nargs=1, sync=True)
     def fzf_sink(self, selections: list[str]):
         for i, selected in enumerate(selections):
             node_id = NodeId(selected[:selected.index(_FZF_LINE_DELIMITER)])
@@ -111,15 +111,19 @@ class Qualia(NvimDriver):
         prefixes = normalized_prefixes(' '.join(query_strings))
         fzf_lines = matching_nodes_content(prefixes)
         self.nvim.call("fzf#run",
-                       {'source': fzf_lines, 'sink': self.fzf_sink_function, 'window': {'width': 0.95, 'height': 0.98},
+                       {'source': fzf_lines, 'sink': self.fzf_sink_command, 'window': {'width': 0.95, 'height': 0.98},
                         'options': ['--delimiter', _FZF_LINE_DELIMITER, '--with-nth', '2..',
                                     '--query', ' '.join(query_strings)]})
+
+    @function("CurrentNodeId", sync=True)
+    def search_nodes(self, line_num: list[int]) -> NodeId:
+        return self.line_info(line_num[0] if line_num else self.current_line_number()).node_id
 
     @autocmd("VimEnter", pattern='*.q.md', sync=True)
     def log_startup_time(self, *_args) -> None:
         load_time = time() - start_time
         if True or load_time > 0.1:
-            self.print_message(f"Loaded in {load_time} seconds")
+            self.print_message(f"{round(load_time, 2)}s")
 
 
 if __name__ == "__main__":

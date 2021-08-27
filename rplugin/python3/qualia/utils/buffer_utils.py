@@ -1,6 +1,7 @@
 from re import compile
-from typing import Union
+from typing import Union, cast
 
+from lmdb import Cursor
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 from markdown_it.tree import SyntaxTreeNode
@@ -8,7 +9,7 @@ from markdown_it.tree import SyntaxTreeNode
 from qualia.config import _COLLAPSED_BULLET, _TO_EXPAND_BULLET
 from qualia.models import NODE_ID_ATTR, Tree, NodeId, BufferNodeId, DuplicateNodeException, LastSeen, \
     UncertainNodeChildrenException
-from qualia.utils.common_utils import removeprefix, get_time_uuid
+from qualia.utils.common_utils import removeprefix, get_time_uuid, get_key_val
 
 _md_parser = MarkdownIt("zero", {"maxNesting": float('inf')}).enable(
     ["link", "list", "code", "fence", "html_block"]).parse
@@ -20,19 +21,20 @@ def get_md_ast(content_lines: list[str]) -> SyntaxTreeNode:
     return root_ast
 
 
-def buffer_to_node_id(buffer_id: BufferNodeId) -> Union[None, NodeId]:
-    return NodeId(buffer_id)
-    # buffer_id_bytes = base65536.decode(buffer_id)
-    # return state.cursors.buffer_to_node_id.get(buffer_id_bytes)
+def buffer_to_node_id(buffer_id: BufferNodeId, buffer_to_node_id_cur: Cursor) -> Union[None, NodeId]:
+    # return NodeId(buffer_id)
+    node_id = get_key_val(buffer_id, buffer_to_node_id_cur)
+    assert node_id is not None
+    return cast(NodeId, node_id)
 
 
-def get_id_line(line: str) -> tuple[NodeId, str]:
-    id_regex = compile(r"\[]\(q://(.+?)\) {0,2}")
+def get_id_line(line: str, buffer_to_node_id_cur: Cursor) -> tuple[NodeId, str]:
+    id_regex = compile(r"\[]\((.{1,2})\) {0,2}")
     id_match = id_regex.match(line)
     if id_match:
         line = removeprefix(line, id_match.group(0))
         buffer_node_id = BufferNodeId(id_match.group(1))
-        node_id = buffer_to_node_id(buffer_node_id)
+        node_id = buffer_to_node_id(buffer_node_id, buffer_to_node_id_cur)
     else:
         node_id = get_node_id()
     return node_id, line

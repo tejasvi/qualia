@@ -18,7 +18,7 @@ from qualia.utils.sync_utils import add_remove_parent
 def sync_buffer(buffer_lines: list[str], main_id: NodeId, last_seen: LastSeen, cursors: Cursors,
                 transposed: bool, realtime_session: Realtime) -> View:
     if main_id in last_seen:
-        main_view, changes = Process().process_lines(buffer_lines, main_id, last_seen)
+        main_view, changes = Process().process_lines(buffer_lines, main_id, last_seen, cursors)
         realtime_data = sync_with_db(main_view, changes, last_seen, cursors, transposed, realtime_session.others_online)
         sync_with_realtime_db(realtime_data, realtime_session)
     else:

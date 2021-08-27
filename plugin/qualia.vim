@@ -32,7 +32,7 @@ if !(has('g:qualia_no_keymap') && g:qualia_no_keymap)
     endfunction
 
     function! QualiaMap()
-        let maplist = ['a :ToggleFold', 'G :NavigateNode', 'g :HoistNode', 't :TransposeNode', 'T :TransposeNode 0', 'p :ToggleParser', '? :SearchQualia', '/ :call SearchWords()']
+        let maplist = ['a :ToggleFold', 'G :NavigateNode', 'g :HoistNode', 't :TransposeNode', 'T :TransposeNode 1', 'p :ToggleParser', '? :SearchQualia', '/ :call SearchWords()']
         for i in range(1, 9)
             call add(maplist, i.' :FoldLevel '.i)
         endfor
@@ -47,12 +47,12 @@ endif
 
 function! PrettyId()
     if !exists('w:matchAdded')
-        for [pattern, cchar] in [['\s*+ [](q://.\{-})\zs \ze '             , '‣'], 
-                                \['\s*- [](q://.\{-})\zs \ze '             , '•'], 
-                                \['\s*\zs[\-*+] [](q://.\{-})\ze  '        , '' ],
-                                \['\s*1[.)] [](q://.\{-})\zs \ze '         , '┃'], 
-                                \['\s*\zs1[.)]\ze [](q://.\{-})  '         , ' '], 
-                                \['\s*1[.)]\zs [](q://.\{-})\ze  '         , '' ]]
+        for [pattern, cchar] in [['\s*+ [](.\{-})\zs \ze '             , '‣'], 
+                                \['\s*- [](.\{-})\zs \ze '             , '•'], 
+                                \['\s*\zs[\-*+] [](.\{-})\ze  '        , '' ],
+                                \['\s*1[.)] [](.\{-})\zs \ze '         , '┃'], 
+                                \['\s*\zs1[.)]\ze [](.\{-})  '         , ' '], 
+                                \['\s*1[.)]\zs [](.\{-})\ze  '         , '' ]]
             call matchadd('Conceal',pattern, 999, -1, {'conceal':cchar})
         endfor
         let w:matchAdded=1

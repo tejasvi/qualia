@@ -38,4 +38,4 @@ def matching_nodes_content(search_keywords: Iterable[str]) -> list[str]:
 
 
 def fzf_input_line(node_id: NodeId, content: list[str]) -> str:
-    return _FZF_LINE_DELIMITER.join([cast(str, node_id)] + content)
+    return cast(str, node_id) + _FZF_LINE_DELIMITER + ' '.join(content)

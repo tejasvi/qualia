@@ -11,7 +11,7 @@ def perf_imports() -> None:
         result = original_import(name, *args, **kwargs)
         time_taken = perf_counter() - import_start_time
         if time_taken >= 0.05:
-            print(f'{time_taken:04.1f} seconds used to load module {name}')
+            print(f'{time_taken:04.2f} seconds used to load module {name}')
         return result
 
     builtins.__import__ = custom_import

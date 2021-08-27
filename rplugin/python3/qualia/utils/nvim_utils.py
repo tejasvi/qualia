@@ -33,11 +33,13 @@ class NvimUtils:
         if self.debugging:
             logger.debug(text)
         else:
-            self.nvim.err_write(text + '\n')
+            self.nvim.out_write(text + '\n')
 
     def replace_with_file(self, filepath: str, replace_buffer: bool) -> None:
-        # Chaining does not work with bwipeout
-        self.nvim.command("bdelete" + "|" f"edit {filepath} | normal lh")  # wiggle closes FZF popup
+        command = f"silent! edit! {filepath} | normal lh"  # wiggle closes FZF popup
+        if replace_buffer:
+            command = "bdelete | " + command
+        self.nvim.command(command)
 
     def navigate_node(self, node_id: NodeId, replace_buffer: bool) -> None:
         transposed = self.buffer_transposed(self.nvim.current.buffer.name)
@@ -79,7 +81,7 @@ class NvimUtils:
     def handle_duplicate_node(self, buffer: Buffer, exp: DuplicateNodeException):
         self.nvim.command("set nowrite")
         self.print_message(
-            f"Skip parsing due to duplicate siblings with Node ID: {exp.node_id} at lines {exp.line_ranges}")
+            f"Duplicate siblings at lines {', '.join([str(first_line) for first_line, _ in exp.line_ranges])}")
         for node_locs in exp.line_ranges:
             for line_num in range(node_locs[0], node_locs[1]):
                 self.nvim.funcs.nvim_buf_add_highlight(buffer.number, self.children_ns, "ErrorMsg", line_num, 0, -1)
@@ -89,7 +91,7 @@ class NvimUtils:
         start_line_num, end_line_num = exp.line_range
         for line_num in range(start_line_num, min(end_line_num, start_line_num + 50)):
             self.nvim.funcs.nvim_buf_add_highlight(buffer.number, self.children_ns, "ErrorMsg", line_num, 0, -1)
-        choice = self.nvim.funcs.confirm("Uncertain state", "&Pause parsing\n&Force parse", 1)
+        choice = self.nvim.funcs.confirm("Uncertain state", "&Pause parsing\n&Continue", 1)
         if choice == 2:
             last_seen.pop_data(exp.node_id)
             return True

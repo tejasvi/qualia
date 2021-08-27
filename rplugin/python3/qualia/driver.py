@@ -8,6 +8,7 @@ from typing import Optional
 from pynvim import Nvim
 from pynvim.api import Buffer
 
+from qualia.config import DEBUG
 from qualia.git import sync_with_git
 from qualia.models import View, DuplicateNodeException, UncertainNodeChildrenException
 from qualia.realtime import Realtime
@@ -23,7 +24,7 @@ class NvimDriver(NvimUtils):
         self.realtime_session = Realtime(lambda: self.main(None, None))
 
     def main(self, view: Optional[View], fold_level: Optional[int]) -> None:
-        t = time()
+        t0 = time()
         current_buffer: Buffer = self.nvim.current.buffer
 
         with Database() as cursors:
@@ -36,8 +37,8 @@ class NvimDriver(NvimUtils):
                 return
             last_seen = self.buffer_last_seen[buffer_id]
 
-            initial_time = time()
-            initial_time_diff = time() - t
+            t1 = time()
+            del1 = time() - t0
 
             while True:
                 try:
@@ -47,13 +48,13 @@ class NvimDriver(NvimUtils):
                                                             transposed, self.realtime_session)
                             break
                         except RecursionError:
-                            if self.nvim.funcs.confirm("Too many nodes open. Expect crash on weak hardware. Continue?",
+                            if self.nvim.funcs.confirm("Too many nodes open. Expect crash on slow hardware. Continue?",
                                                        "&No\n&Yes", 1) == 1:
                                 return
                             setrecursionlimit(getrecursionlimit() * 2)
                         finally:
-                            sync_time = time()
-                            sync_time_diff = time() - initial_time
+                            t2 = time()
+                            del2 = time() - t1
                 except DuplicateNodeException as exp:
                     self.handle_duplicate_node(current_buffer, exp)
                 except UncertainNodeChildrenException as exp:
@@ -65,17 +66,16 @@ class NvimDriver(NvimUtils):
                                                               fold_level)
                 break
 
-        l = time() - t
-        if l > 0.1:
-            self.print_message("TOOK", l, initial_time_diff, sync_time_diff, time() - sync_time)
+        total = time() - t0
+        if DEBUG and total > 0.1:
+            self.print_message("Took: ", ' '.join([str(round(n, 3)) for n in (total, del1, del2, time() - t2)]))
 
         self.nvim.command("silent set write | silent update")
         self.changedtick[buffer_id] = self.nvim.eval("b:changedtick")
 
-        Thread(target=sync_with_git, name="SyncGit").start()
-        # if True or time() - self.last_git_sync > 15:
-        #     Popen([executable, Path(__file__).parent.joinpath("git.py").as_posix()], start_new_session=True)
-        #     self.last_git_sync = time()
+        if DEBUG or time() - self.last_git_sync > 15:
+            Thread(target=sync_with_git, name="SyncGit").start()
+            self.last_git_sync = time()
 
 
 r"""

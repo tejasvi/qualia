@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from sys import setrecursionlimit, getrecursionlimit
 from typing import Optional
 
 from orderedset import OrderedSet
@@ -19,40 +18,23 @@ def render(root_view: View, buffer: Buffer, nvim: Nvim, cursors: Cursors, transp
     new_last_seen, new_content_lines = get_buffer_lines_from_view(root_view, cursors, transposed, fold_level)
     old_content_lines = render_buffer(buffer, new_content_lines, nvim)
 
-    while True:
+    if DEBUG:
         try:
-            if DEBUG:
-                try:
-                    new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.main_id,
-                                                                         new_last_seen)
-                    assert (not new_changes or (nvim.err_write(str(new_changes)) and False)), (
-                        new_content_lines, new_changes)
-                    re_last_seen, re_content_lines = get_buffer_lines_from_view(new_root_view, cursors, transposed,
-                                                                                fold_level)
-                    assert (new_content_lines == re_content_lines) or (
-                            nvim.err_write('\n'.join(
-                                new_content_lines + ['<TO>'] + re_content_lines)) and False), new_content_lines + [
-                        '<TO>'] + re_content_lines
-                except Exception as exp:
-                    for _ in range(100):
-                        new_root_view, new_changes = Process().process_lines(old_content_lines.copy(),
-                                                                             root_view.main_id,
-                                                                             new_last_seen)
-                        new_root_view, new_changes = Process().process_lines(new_content_lines.copy(),
-                                                                             root_view.main_id,
-                                                                             new_last_seen)
-                        re_last_seen, re_content_lines = get_buffer_lines_from_view(new_root_view, cursors, transposed,
-                                                                                    fold_level)
-                    raise exp
-
-                # nvim.err_write(str((new_content_lines, old_content_lines)))
-                logger.debug(new_content_lines, old_content_lines)
-            break
-        except RecursionError:
-            if nvim.funcs.confirm("Too many nodes open. Expect slowdown on older machines. Continue?", "&Yes\n&Cancel",
-                                  2) == 2:
-                return LastSeen()
-            setrecursionlimit(getrecursionlimit() * 2)
+            new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.main_id,
+                                                                 new_last_seen, cursors)
+            assert not new_changes, (new_content_lines, new_changes)
+            re_last_seen, re_content_lines = get_buffer_lines_from_view(new_root_view, cursors, transposed, fold_level)
+            assert new_content_lines == re_content_lines, '\n'.join(new_content_lines + [ '<TO>'] + re_content_lines)
+        except Exception as exp:
+            for _ in range(100):
+                new_root_view, new_changes = Process().process_lines(old_content_lines.copy(), root_view.main_id,
+                                                                     new_last_seen, cursors)
+                new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.main_id,
+                                                                     new_last_seen, cursors)
+                re_last_seen, re_content_lines = get_buffer_lines_from_view(new_root_view, cursors, transposed,
+                                                                            fold_level)
+            raise exp
+        logger.debug(new_content_lines, old_content_lines)
     return new_last_seen
 
 
@@ -100,6 +82,6 @@ def get_buffer_lines_from_view(buffer_view: View, cursors: Cursors, transposed: 
                 stack.append((child_node_id, children_context, current_indent_level, cur_nest_level + 1, ordered))
 
         buffer_lines += content_lines_to_buffer_lines(content_lines, cur_node_id, current_indent_level, expanded,
-                                                      ordered)
+                                                      ordered, cursors)
 
     return last_seen, buffer_lines or ['']

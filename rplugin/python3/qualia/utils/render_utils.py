@@ -1,12 +1,13 @@
 from difflib import SequenceMatcher
-from typing import Iterator, Callable, Union
+from typing import Iterator, Callable, Union, cast
 
+import base65536
 from pynvim import Nvim
 from pynvim.api import Buffer
 
 from qualia.config import DEBUG, _EXPANDED_BULLET, _COLLAPSED_BULLET, NEST_LEVEL_SPACES
-from qualia.models import NodeId, BufferNodeId
-from qualia.utils.common_utils import logger
+from qualia.models import NodeId, BufferNodeId, Cursors
+from qualia.utils.common_utils import logger, get_key_val, put_key_val
 
 
 def batch_undo(nvim: Nvim) -> Iterator[None]:
@@ -114,9 +115,9 @@ def different_item_from_end(list1: list, list2: list, minimum_idx: int) -> tuple
     return idx1, idx2
 
 
-def content_lines_to_buffer_lines(content_lines: list[str], node_id: NodeId, level: int, expanded: bool,
-                                  ordered: bool) -> list[str]:
-    buffer_id = node_to_buffer_id(node_id)
+def content_lines_to_buffer_lines(content_lines: list[str], node_id: NodeId, level: int, expanded: bool, ordered: bool,
+                                  cursors: Cursors) -> list[str]:
+    buffer_id = node_to_buffer_id(node_id, cursors)
     if level == 0:
         buffer_lines = content_lines
     else:
@@ -125,24 +126,26 @@ def content_lines_to_buffer_lines(content_lines: list[str], node_id: NodeId, lev
         space_prefix = ' ' * space_count
         buffer_lines = [space_prefix[:-offset]
                         + ('1.' if ordered else (_EXPANDED_BULLET if expanded else _COLLAPSED_BULLET))
-                        + f" [](q://{buffer_id})  "
+                        + f" []({buffer_id})  "
                         + content_lines[0]]
         for idx, line in enumerate(content_lines[1:]):
             buffer_lines.append(space_prefix + line)
     return buffer_lines
 
 
-def node_to_buffer_id(node_id: NodeId) -> BufferNodeId:
-    return BufferNodeId(node_id)
-    # buffer_node_id = get_key_val(node_id, cursors.buffer_to_node_id)
-    # if buffer_node_id is None:
-    #     if cursors.buffer_to_node_id.last():
-    #         last_buffer_id_bytes = cursors.buffer_to_node_id.key()
-    #         new_counter = int.from_bytes(last_buffer_id_bytes, 'big') + 1
-    #         buffer_id_bytes = new_counter.to_bytes(32, 'big').decode()
-    #     else:
-    #         buffer_id_bytes = (0).to_bytes(32, 'big')
-    #     buffer_node_id = base65536.encode(buffer_id_bytes)
-    #     # base65536 doesn't output brackets https://qntm.org/safe
-    #     put_key_val(node_id, buffer_node_id, cursors.node_to_buffer_id)
-    # return buffer_node_id
+def node_to_buffer_id(node_id: NodeId, cursors: Cursors) -> BufferNodeId:
+    # return BufferNodeId(node_id)
+    buffer_node_id = cast(BufferNodeId, get_key_val(node_id, cursors.node_to_buffer_id))
+    if buffer_node_id is None:
+        if cursors.buffer_to_node_id.last():
+            last_buffer_id: BufferNodeId = cursors.buffer_to_node_id.key().decode()
+            last_buffer_id_bytes = base65536.decode(last_buffer_id)
+            new_counter = int.from_bytes(last_buffer_id_bytes, 'big') + 1
+            buffer_id_bytes = new_counter.to_bytes(4 if len(last_buffer_id_bytes) > 2 else 2, 'big')
+        else:
+            buffer_id_bytes = (0).to_bytes(2, 'big')
+        # base65536 doesn't output brackets https://qntm.org/safe
+        buffer_node_id: BufferNodeId = base65536.encode(buffer_id_bytes)
+        put_key_val(node_id, buffer_node_id, cursors.node_to_buffer_id, True)
+        put_key_val(buffer_node_id, node_id, cursors.buffer_to_node_id, True)
+    return buffer_node_id

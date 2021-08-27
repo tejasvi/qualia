@@ -1,28 +1,32 @@
 from __future__ import annotations
 
 from itertools import zip_longest
-from typing import Union, Iterator
+from typing import Union, Iterator, Optional
 
+from lmdb import Cursor
 from markdown_it.tree import SyntaxTreeNode
 from orderedset import OrderedSet
 
-from qualia.models import NodeId, View, ProcessState, NODE_ID_ATTR, Tree, LastSeen, BufferNodeId
+from qualia.models import NodeId, View, ProcessState, NODE_ID_ATTR, Tree, LastSeen, Cursors
 from qualia.utils.buffer_utils import get_md_ast, get_id_line, raise_if_duplicate_sibling, get_ast_sub_lists, \
     preserve_expand_consider_sub_tree
 from qualia.utils.common_utils import removeprefix, conflict
+from qualia.utils.render_utils import node_to_buffer_id
 
 
 class Process:
     def __init__(self) -> None:
-        self._lines = None
-        self._changes = None
+        self._lines: Optional[list[str]] = None
+        self._changes: Optional[ProcessState] = None
+        self.buffer_to_node_id_cur: Optional[Cursor] = None
 
-    def process_lines(self, lines: list[str], main_id: NodeId, last_seen: LastSeen) -> tuple[
+    def process_lines(self, lines: list[str], main_id: NodeId, last_seen: LastSeen, cursors: Cursors) -> tuple[
         View, ProcessState]:
+        self.buffer_to_node_id_cur = cursors.buffer_to_node_id
         self._changes = ProcessState()
         self._lines = lines
 
-        self._lines[0] = f"[](q://{BufferNodeId(main_id)})  " + self._lines[0]
+        self._lines[0] = f"[]({node_to_buffer_id(main_id, cursors)})  " + self._lines[0]
 
         buffer_tree: Tree = {}  # {node_id: {child_1: {..}, child_2: {..}, ..}}
 
@@ -40,7 +44,7 @@ class Process:
         content_indent = 0 if is_buffer_ast else self._lines[content_start_line_num].index(
             list_item_ast.markup) + 2
         first_line = self._lines[content_start_line_num][content_indent:]
-        node_id, id_line = get_id_line(first_line)
+        node_id, id_line = get_id_line(first_line, self.buffer_to_node_id_cur)
         list_item_ast.meta[NODE_ID_ATTR] = node_id
 
         sub_lists = get_ast_sub_lists(list_item_ast)
