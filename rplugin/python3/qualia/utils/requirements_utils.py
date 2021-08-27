@@ -29,4 +29,4 @@ def install_qualia_dependencies(optional_install_dir: str) -> None:
                 pass
             check_call(default_python + install_command[1:],
                        env=dict(environ, PIP_TARGET=optional_install_dir,
-                                PYTHONPATH=environ["PYTHONPATH"] + pathsep + optional_install_dir))
+                                PYTHONPATH=environ.get("PYTHONPATH", "") + pathsep + optional_install_dir))
