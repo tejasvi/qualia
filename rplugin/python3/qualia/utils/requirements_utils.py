@@ -5,7 +5,7 @@ from sys import executable
 
 
 def get_location(exe_name: str) -> str:
-    return run(['where' if name == 'nt' else 'which', exe_name], capture_output=True, text=True).stdout
+    return run(['where' if name == 'nt' else 'which', exe_name], capture_output=True, text=True).stdout.rstrip('\n')
 
 
 def install_qualia_dependencies(optional_install_dir: str) -> None:
