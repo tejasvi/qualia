@@ -2,7 +2,7 @@ from pathlib import Path
 from sys import path
 
 optional_install_dir = Path().home().joinpath('.qualia_packages').as_posix()
-path.insert(0, optional_install_dir)
+path.append(optional_install_dir)
 try:
     from qualia.commands import Qualia
 except (ModuleNotFoundError, ImportError):
