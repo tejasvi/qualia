@@ -21,7 +21,7 @@ def install_qualia_dependencies(optional_install_dir: str) -> None:
 
     try:
         for command in (init_command, install_command):
-            check_call(command + ["--user"] )
+            check_call(command + ["--user"])
     except CalledProcessError:
         try:
             for command in (init_command, install_command):
@@ -32,7 +32,8 @@ def install_qualia_dependencies(optional_install_dir: str) -> None:
                 check_call(default_python + ["-m", "ensurepip", "--default-pip"])
             except CalledProcessError:
                 pass
-            check_call(default_python + init_command[1:])
-            check_call(default_python + install_command[1:], env=dict(environ, PIP_TARGET=optional_install_dir,
-                                                                      PYTHONPATH=(environ["PYTHONPATH"] + pathsep +
-                                                                                  optional_install_dir) if "PYTHONPATH" in environ else optional_install_dir))
+            env = dict(environ, PIP_TARGET=optional_install_dir,
+                       PYTHONPATH=(environ["PYTHONPATH"] + pathsep + optional_install_dir
+                                   ) if "PYTHONPATH" in environ else optional_install_dir)
+            for command in (init_command, install_command):
+                check_call(default_python + command[1:], env=env)
