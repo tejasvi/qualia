@@ -6,9 +6,9 @@ function! qualia#install()
     if !has("nvim")
 		echoerr "Please install latest nvim. See https://github.com/neovim/neovim/wiki/Installing-Neovim"
     endif
+	UpdateRemotePlugins " Install missing packages
 	UpdateRemotePlugins
-	UpdateRemotePlugins
-	echomsg "Please restart"
+	echomsg "Try nvim .q.md"
 endfunction
 command! -nargs=0 QualiaInstall call qualia#install()
 
