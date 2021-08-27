@@ -43,6 +43,8 @@ _DB_FOLDER = _APP_FOLDER_PATH.joinpath("db")
 _GIT_FOLDER = _APP_FOLDER_PATH.joinpath("git")
 _LOG_FILENAME = _APP_FOLDER_PATH.joinpath('logs')
 
+_SHORT_BUFFER_ID = True
+
 _RESET_APP_FOLDER = True
 if _RESET_APP_FOLDER:
     def onerror(func: Callable[[PathLike], None], path: PathLike, exc_info) -> None:

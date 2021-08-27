@@ -6,7 +6,7 @@ from markdown_it import MarkdownIt
 from markdown_it.token import Token
 from markdown_it.tree import SyntaxTreeNode
 
-from qualia.config import _COLLAPSED_BULLET, _TO_EXPAND_BULLET
+from qualia.config import _COLLAPSED_BULLET, _TO_EXPAND_BULLET, _SHORT_BUFFER_ID
 from qualia.models import NODE_ID_ATTR, Tree, NodeId, BufferNodeId, DuplicateNodeException, LastSeen, \
     UncertainNodeChildrenException
 from qualia.utils.common_utils import removeprefix, get_time_uuid, get_key_val
@@ -22,14 +22,15 @@ def get_md_ast(content_lines: list[str]) -> SyntaxTreeNode:
 
 
 def buffer_to_node_id(buffer_id: BufferNodeId, buffer_to_node_id_cur: Cursor) -> Union[None, NodeId]:
-    # return NodeId(buffer_id)
+    if not _SHORT_BUFFER_ID:
+        return cast(NodeId, buffer_id)
     node_id = get_key_val(buffer_id, buffer_to_node_id_cur)
     assert node_id is not None
     return cast(NodeId, node_id)
 
 
 def get_id_line(line: str, buffer_to_node_id_cur: Cursor) -> tuple[NodeId, str]:
-    id_regex = compile(r"\[]\((.{1,2})\) {0,2}")
+    id_regex = compile(r"\[]\((.+)\) {0,2}")
     id_match = id_regex.match(line)
     if id_match:
         line = removeprefix(line, id_match.group(0))

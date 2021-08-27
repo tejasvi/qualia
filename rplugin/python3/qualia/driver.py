@@ -95,10 +95,6 @@ Then start nvim normally from anywhere and open file with .q.md extension
 
 For pycharm debugging, nvim --listen \\.\pipe\nvim-15600-0 filename
 
-subprocess.Popen to trigger backup/git sync in independant process
-
-fzf send query to window
-
 :call setline('.', substitute(getline('.'), '\%2c.', 'a', '')) TODO
     Useful when creating new node and prevent odd cursor movement.
         Linelevel difflib

@@ -1,11 +1,11 @@
+from base64 import b64decode, b64encode
 from difflib import SequenceMatcher
 from typing import Iterator, Callable, Union, cast
 
-import base65536
 from pynvim import Nvim
 from pynvim.api import Buffer
 
-from qualia.config import DEBUG, _EXPANDED_BULLET, _COLLAPSED_BULLET, NEST_LEVEL_SPACES
+from qualia.config import DEBUG, _EXPANDED_BULLET, _COLLAPSED_BULLET, NEST_LEVEL_SPACES, _SHORT_BUFFER_ID
 from qualia.models import NodeId, BufferNodeId, Cursors
 from qualia.utils.common_utils import logger, get_key_val, put_key_val
 
@@ -133,19 +133,27 @@ def content_lines_to_buffer_lines(content_lines: list[str], node_id: NodeId, lev
     return buffer_lines
 
 
+# misplaced cursor when concealing wide characters (from base65536)
+_buffer_id_encoder: Callable[[bytes], str] = lambda a: b64encode(a).decode().rstrip("=")  # base65536.encode
+_buffer_id_decoder: Callable[[str], bytes] = lambda a: b64decode(a + "==")  # base65536.decode
+
+
 def node_to_buffer_id(node_id: NodeId, cursors: Cursors) -> BufferNodeId:
-    # return BufferNodeId(node_id)
+    if not _SHORT_BUFFER_ID:
+        return cast(BufferNodeId, node_id)
     buffer_node_id = cast(BufferNodeId, get_key_val(node_id, cursors.node_to_buffer_id))
     if buffer_node_id is None:
         if cursors.buffer_to_node_id.last():
             last_buffer_id: BufferNodeId = cursors.buffer_to_node_id.key().decode()
-            last_buffer_id_bytes = base65536.decode(last_buffer_id)
+            last_buffer_id_bytes = _buffer_id_decoder(last_buffer_id)
             new_counter = int.from_bytes(last_buffer_id_bytes, 'big') + 1
-            buffer_id_bytes = new_counter.to_bytes(4 if len(last_buffer_id_bytes) > 2 else 2, 'big')
+            # min_2_multiple_bytes = 2 * ceil( / 2)
+            buffer_id_bytes = new_counter.to_bytes(len(last_buffer_id_bytes), 'big')
         else:
-            buffer_id_bytes = (0).to_bytes(2, 'big')
+            buffer_id_bytes = (0).to_bytes(1, 'big')
         # base65536 doesn't output brackets https://qntm.org/safe
-        buffer_node_id: BufferNodeId = base65536.encode(buffer_id_bytes)
+        # base65536 gives single character for 16bits == 2bytes
+        buffer_node_id: str = _buffer_id_encoder(buffer_id_bytes)
         put_key_val(node_id, buffer_node_id, cursors.node_to_buffer_id, True)
         put_key_val(buffer_node_id, node_id, cursors.buffer_to_node_id, True)
-    return buffer_node_id
+    return cast(BufferNodeId, buffer_node_id)

@@ -21,9 +21,8 @@ class Qualia(NvimDriver):
         super().__init__(nvim, debugging)
         bootstrap()
 
-    @autocmd("TextChanged,FocusGained,BufEnter,InsertLeave,BufLeave,BufFilePost", pattern='*.q.md', sync=True,
-             allow_nested=False,
-             eval=None)
+    @autocmd("TextChanged,FocusGained,BufEnter,InsertLeave,BufLeave,BufFilePost,BufAdd,CursorHold", pattern='*.q.md',
+             sync=True, allow_nested=False, eval=None)
     def trigger_sync(self, *_args) -> None:
         if self.debugging or not self.should_continue():
             return
