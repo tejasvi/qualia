@@ -1,6 +1,6 @@
 from os import environ, name, pathsep
 from pathlib import Path
-from subprocess import CalledProcessError, run, check_output
+from subprocess import run
 from sys import executable
 
 
@@ -8,14 +8,20 @@ def get_location(exe_name: str) -> str:
     return run(['where' if name == 'nt' else 'which', exe_name], capture_output=True, text=True).stdout.rstrip('\n')
 
 
+class ProcessException(Exception):
+    pass
+
+
 def cmd(*args, **kwargs) -> None:
-    print(check_output(*args, **kwargs).stdout)
+    res = run(*args, **kwargs)
+    if res.returncode:
+        raise ProcessException(res.returncode, str(args) + str(kwargs), res.stdout, res.stderr)
 
 
 def install_qualia_dependencies(optional_install_dir: str) -> None:
     try:
         cmd([executable, "-m", "ensurepip", "--default-pip"])
-    except CalledProcessError:
+    except ProcessException:
         pass
 
     requirements_file_path = Path(__file__).parent.parent.parent.joinpath("requirements.txt").as_posix()
@@ -26,15 +32,15 @@ def install_qualia_dependencies(optional_install_dir: str) -> None:
     try:
         for command in (init_command, install_command):
             cmd(command + ["--user"])
-    except CalledProcessError:
+    except ProcessException:
         try:
             for command in (init_command, install_command):
                 cmd(command)
-        except CalledProcessError:
+        except ProcessException:
             default_python = [get_location("py"), "-3"] if name == 'nt' else [get_location("python3")]
             try:
                 cmd(default_python + ["-m", "ensurepip", "--default-pip"])
-            except CalledProcessError:
+            except ProcessException:
                 pass
             env = dict(environ, PIP_TARGET=optional_install_dir,
                        PYTHONPATH=(environ["PYTHONPATH"] + pathsep + optional_install_dir
