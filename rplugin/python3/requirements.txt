@@ -1,6 +1,3 @@
-setuptools
-wheel
-
 pynvim
 
 markdown-it-py[plugins]
