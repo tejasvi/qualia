@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections import UserDict
 from dataclasses import dataclass
-from typing import NewType, Union, Any, Optional, Callable, Tuple, Dict, MutableMapping, List, FrozenSet
+from subprocess import CalledProcessError
+from typing import NewType, Union, Any, Optional, Tuple, Dict, MutableMapping, List, Callable
 
 from lmdb import Cursor
 from orderedset import OrderedSet
@@ -13,6 +14,7 @@ BufferId = Tuple[int, str]
 BufferNodeId = NewType("BufferNodeId", str)
 Tree = Dict[NodeId, Optional[dict]]
 LineRange = Tuple[int, int]
+AstMap = Tuple[int, int]
 
 
 class Client(TypedDict):
@@ -23,16 +25,16 @@ class Client(TypedDict):
 @dataclass
 class View:
     main_id: NodeId
-    sub_tree: Union[Tree, None]
+    sub_tree: Optional[Tree]
 
 
 class ProcessState:
     def __init__(self) -> None:
         self.changed_content_map: Dict[NodeId, List[str]] = {}
-        self.changed_children_map: Dict[NodeId, OrderedSet[NodeId]] = {}
+        self.changed_descendants_map: Dict[NodeId, OrderedSet[NodeId]] = {}
 
     def __bool__(self) -> bool:
-        return bool(self.changed_children_map or self.changed_content_map)
+        return bool(self.changed_descendants_map or self.changed_content_map)
 
     def __repr__(self) -> str:
         return self.__dict__.__repr__()
@@ -59,7 +61,15 @@ class DuplicateNodeException(Exception):
 @dataclass
 class NodeData:
     content_lines: List[str]
-    children_ids: FrozenSet[NodeId]
+    descendants_ids: OrderedSet[NodeId]
+
+
+class CustomCalledProcessError(CalledProcessError):
+    def __init__(self, exp: CalledProcessError):
+        self.__dict__.update(exp.__dict__)
+
+    def __str__(self) -> str:
+        return super().__str__() + self.stderr + self.stdout
 
 
 class LastSeen(UserDict, MutableMapping[NodeId, NodeData]):
@@ -101,14 +111,18 @@ class Cursors:
     transposed_views: Cursor
 
 
-ConflictHandlerData = Union[List[str], Union[List[str], List[NodeId]]]
-ConflictHandler = Callable[[NodeId, ConflictHandlerData, Cursor], ConflictHandlerData]
+ChildrenConflictData = dict[NodeId, tuple[str, List[NodeId]]]
+ContentConflictData = dict[NodeId, tuple[str, List[str]]]
+ConflictData = Union[ChildrenConflictData, ContentConflictData]
 
 RealtimeChildrenData = Dict[NodeId, Tuple[str, List[NodeId]]]
-RealtimeContentData = Dict[NodeId, Tuple[str, List[str]]]
+RealtimeContentData = Dict[NodeId, Tuple[str, List[Union[str, NodeId]]]]
 
 
 class RealtimeData(TypedDict, total=False):
     children: RealtimeChildrenData
     content: RealtimeContentData
     client_id: str
+
+
+BufferContentSetter = Callable[[int, Union[str, list[str]]], None]

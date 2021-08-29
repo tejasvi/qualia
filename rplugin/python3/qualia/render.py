@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, cast
 
 from orderedset import OrderedSet
 from pynvim import Nvim
@@ -9,12 +9,12 @@ from pynvim.api import Buffer
 from qualia.buffer import Process
 from qualia.config import DEBUG
 from qualia.models import NodeId, View, NodeData, Tree, LastSeen, Cursors, LineInfo
-from qualia.utils.common_utils import get_key_val, logger
+from qualia.utils.common_utils import get_key_val, logger, get_node_descendants
 from qualia.utils.render_utils import render_buffer, content_lines_to_buffer_lines
 
 
 def render(root_view: View, buffer: Buffer, nvim: Nvim, cursors: Cursors, transposed: bool,
-           fold_level: int) -> LastSeen:
+           fold_level: Optional[int]) -> LastSeen:
     new_last_seen, new_content_lines = get_buffer_lines_from_view(root_view, cursors, transposed, fold_level)
     old_content_lines = render_buffer(buffer, new_content_lines, nvim)
 
@@ -24,7 +24,7 @@ def render(root_view: View, buffer: Buffer, nvim: Nvim, cursors: Cursors, transp
                                                                  new_last_seen, cursors)
             assert not new_changes, (new_content_lines, new_changes)
             re_last_seen, re_content_lines = get_buffer_lines_from_view(new_root_view, cursors, transposed, fold_level)
-            assert new_content_lines == re_content_lines, '\n'.join(new_content_lines + [ '<TO>'] + re_content_lines)
+            assert new_content_lines == re_content_lines, '\n'.join(new_content_lines + ['<TO>'] + re_content_lines)
         except Exception as exp:
             for _ in range(100):
                 new_root_view, new_changes = Process().process_lines(old_content_lines.copy(), root_view.main_id,
@@ -48,38 +48,37 @@ def get_buffer_lines_from_view(buffer_view: View, cursors: Cursors, transposed: 
     while stack:
         cur_node_id, context, previous_indent_level, cur_nest_level, previously_ordered = stack.pop()
 
-        content_lines = get_key_val(cur_node_id, cursors.content)
+        content_lines = cast(Optional[list[str]], get_key_val(cur_node_id, cursors.content, False))
         if content_lines is None:
             continue
 
-        children_ids: OrderedSet[NodeId] = OrderedSet(
-            get_key_val(cur_node_id, cursors.parents if transposed else cursors.children) or [])
+        descendant_ids: OrderedSet[NodeId] = get_node_descendants(cursors, cur_node_id, transposed)
 
         if cur_node_id not in last_seen:
-            last_seen[cur_node_id] = NodeData(content_lines, frozenset(children_ids))
+            last_seen[cur_node_id] = NodeData(content_lines, OrderedSet(descendant_ids))
         last_seen.line_info[len(buffer_lines)] = LineInfo(cur_node_id, context)
 
-        buffer_children_context = context[cur_node_id]
+        buffer_descendant_context = context[cur_node_id]
 
         if fold_level is not None:
-            if buffer_children_context is None:
+            if buffer_descendant_context is None:
                 if cur_nest_level < fold_level:
-                    buffer_children_context = {}
+                    buffer_descendant_context = {}
             else:
                 if cur_nest_level == fold_level:
-                    buffer_children_context = None
+                    buffer_descendant_context = None
 
-        expanded = not children_ids or buffer_children_context is not None
+        expanded = not descendant_ids or buffer_descendant_context is not None
 
-        ordered = expanded and ((len(children_ids) == 1) or previously_ordered) and previous_indent_level >= 0 and len(
+        ordered = expanded and ((len(descendant_ids) == 1) or previously_ordered) and previous_indent_level >= 0 and len(
             context) == 1
         current_indent_level = previous_indent_level if (ordered and previously_ordered) else previous_indent_level + 1
 
-        if buffer_children_context is not None:
-            context[cur_node_id] = children_context = {child_id: buffer_children_context.get(child_id, None)
-                                                       for child_id in children_ids}
-            for child_node_id in reversed(children_ids):  # sorted(children_ids, reverse=True):
-                stack.append((child_node_id, children_context, current_indent_level, cur_nest_level + 1, ordered))
+        if buffer_descendant_context is not None:
+            context[cur_node_id] = descendant_context = {descendant_id: buffer_descendant_context.get(descendant_id, None)
+                                                       for descendant_id in descendant_ids}
+            for descendant_node_id in reversed(descendant_ids):  # sorted(descendants_ids, reverse=True):
+                stack.append((descendant_node_id, descendant_context, current_indent_level, cur_nest_level + 1, ordered))
 
         buffer_lines += content_lines_to_buffer_lines(content_lines, cur_node_id, current_indent_level, expanded,
                                                       ordered, cursors)

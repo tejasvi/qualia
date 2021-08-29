@@ -1,15 +1,17 @@
+from functools import cache
 from os import symlink
 from pathlib import Path
 from re import search
 from tempfile import gettempdir
 from time import sleep
-from typing import Iterable, TextIO
+from typing import Iterable, TextIO, cast
 
 from orderedset import OrderedSet
 
 from qualia.config import _CONTENT_CHILDREN_SEPARATOR_LINES, GIT_SEARCH_URL, _GIT_FOLDER, GIT_BRANCH
 from qualia.models import NodeData, NodeId, Cursors, LastSeen
-from qualia.utils.common_utils import cd_run_git_cmd, node_id_to_hex, get_key_val, file_name_to_node_id
+from qualia.utils.common_utils import cd_run_git_cmd, node_id_to_hex, file_name_to_node_id, logger, \
+    get_node_descendants, get_node_content
 
 
 def add_content_to_node_directory(content_lines: list[str], node_directory_path: Path):
@@ -22,14 +24,15 @@ def add_children_to_node_directory(node_children_ids: Iterable[NodeId], node_dir
         hex_id = node_id_to_hex(child_node_id)
         child_path = node_directory_path.joinpath(hex_id + ".q")
         symlink_source = f"../{hex_id}.q"
-        if symlinks_enabled:
+        if symlinks_enabled():
             symlink(symlink_source, child_path, target_is_directory=True)
         else:
             with open(child_path, 'x') as child_file:
                 child_file.writelines([symlink_source])
 
 
-def _check_symlinks_enabled() -> bool:
+@cache
+def symlinks_enabled() -> bool:
     temp_dir = Path(gettempdir())
     for try_num in range(100):
         src = temp_dir.joinpath(f'{try_num}.test.q')
@@ -43,16 +46,14 @@ def _check_symlinks_enabled() -> bool:
         except (NotImplementedError, OSError):
             return False
         src.unlink()
-        return True
+        break
+    return True
 
 
-symlinks_enabled = _check_symlinks_enabled()
-
-
-def create_markdown_file(cursors: Cursors, node_id: NodeId) -> list[NodeId]:
-    content_lines: list[str] = get_key_val(node_id, cursors.content)
+def create_markdown_file(cursors: Cursors, node_id: NodeId) -> Iterable[NodeId]:
+    content_lines = cast(list[str], get_node_content(cursors, node_id))
     content_lines.extend(_CONTENT_CHILDREN_SEPARATOR_LINES)
-    node_children_ids: list[NodeId] = get_key_val(node_id, cursors.children) or []
+    node_children_ids = get_node_descendants(cursors, node_id, False)
     content_lines.append(f"0. [`Backlinks`]({GIT_SEARCH_URL + node_id_to_hex(node_id)})")
     for i, child_id in enumerate(node_children_ids):
         hex_id = node_id_to_hex(child_id)
@@ -69,9 +70,9 @@ def pop_unsynced_nodes(cursors: Cursors):
         while True:
             node_id: NodeId = unsynced_children.key().decode()
             unsynced_children.delete()
-            children_ids = frozenset(get_key_val(node_id, cursors.children))
+            children_ids = get_node_descendants(cursors, node_id, False)
             if node_id in last_seen:
-                last_seen[node_id].children_ids = children_ids
+                last_seen[node_id].descendants_ids = children_ids
             else:
                 last_seen[node_id] = NodeData([''], children_ids)
             if not unsynced_children.next():
@@ -79,13 +80,13 @@ def pop_unsynced_nodes(cursors: Cursors):
     unsynced_content = cursors.unsynced_content
     if unsynced_content.first():
         while True:
-            node_id: NodeId = unsynced_content.key().decode()
+            cur_node_id: NodeId = unsynced_content.key().decode()
             unsynced_content.delete()
-            content_lines = get_key_val(node_id, cursors.content)
-            if node_id in last_seen:
-                last_seen[node_id].content_lines = content_lines
+            content_lines = get_node_content(cursors, cur_node_id)
+            if cur_node_id in last_seen:
+                last_seen[cur_node_id].content_lines = content_lines
             else:
-                last_seen[node_id] = NodeData(content_lines, frozenset())
+                last_seen[cur_node_id] = NodeData(content_lines, OrderedSet())
             if not unsynced_content.next():
                 break
     return last_seen
@@ -113,16 +114,21 @@ class GitInit:
     def __enter__(self) -> None:
         assert _GIT_FOLDER.joinpath(".git").exists(), f"{_GIT_FOLDER.joinpath('.git')} does not exist"
         max_tries = 3
-        for tries in range(1, max_tries + 1):
+        tries = 0
+        while True:
+            tries += 1
             self.lock_file_path = Path(_GIT_FOLDER).joinpath(".git/.qualia_lock")
             try:
                 self.lock_file = open(self.lock_file_path, 'x')
             except FileExistsError:
-                if tries == max_tries:
-                    raise LockNotAcquired(
+                if tries >= max_tries:
+                    logger.critical(
                         "Could not acquire lock probably due to previous program crash. "
-                        f"Verify the data and then delete the Lock File: '{self.lock_file_path}' manually.")
-                sleep(10)
+                        f"Verify the data. Deleting the Lock File '{self.lock_file_path}' now.")
+                    self.lock_file_path.unlink()
+                    continue
+                else:
+                    sleep(10)
             else:
                 existing_branch = cd_run_git_cmd(["branch", "--show-current"])
                 if existing_branch == GIT_BRANCH:

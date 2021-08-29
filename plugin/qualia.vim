@@ -1,6 +1,11 @@
 if exists("g:loaded_qualia")
     finish
 endif
+let g:loaded_qualia = 1
+
+function! qualia#trigger_sync() abort
+    TriggerSync
+endfunction
 
 function! qualia#install()
     if !has("nvim")
@@ -12,52 +17,53 @@ function! qualia#install()
 endfunction
 command! -nargs=0 QualiaInstall call qualia#install()
 
-if !(has('g:qualia_no_keymap') && g:qualia_no_keymap)
-    if !has('g:qualia_prefix_key')
+if !(exists('g:qualia_no_keymap') && g:qualia_no_keymap)
+    if !exists('g:qualia_prefix_key')
         let g:qualia_prefix_key='<Leader>'
     endif
 
-    function! UserInput(prompt)
+    function! qualia#user_input(prompt)
         call inputsave()
         let l:input = input(a:prompt)
         call inputrestore()
         return l:input
     endfunction
 
-    function! SearchWords()
-        let l:user_input = UserInput("Search: ")
+    function! qualia#search_input_query()
+        let l:user_input = qualia#user_input("Search: ")
         if l:user_input !=# ""
-            execute 'SearchQualia '.l:user_input
+            execute ':SearchQualia '.l:user_input
         endif
     endfunction
 
-    function! QualiaMap()
-        let maplist = ['a :ToggleFold', 'G :NavigateNode', 'g :HoistNode', 't :TransposeNode', 'T :TransposeNode 1', 'p :ToggleParser', '? :SearchQualia', '/ :call SearchWords()']
-        for i in range(1, 9)
-            call add(maplist, i.' :FoldLevel '.i)
-        endfor
-        for mapstr in maplist
-            execute 'nnoremap <buffer><silent>'.g:qualia_prefix_key.mapstr.'<CR>'
-        endfor
+    function! qualia#set_key_map()
+        if !exists('b:qualia_key_map')
+            let maplist = ['a :ToggleFold', 'G :NavigateNode', 'g :HoistNode', 't :TransposeNode', 'T :TransposeNode 1', 'p :ToggleParser', '? :SearchQualia', '/ :call qualia#search_input_query()']
+            for i in range(1, 9)
+                call add(maplist, i.' :FoldLevel '.i)
+            endfor
+            for mapstr in maplist
+                execute 'nnoremap <unique><buffer><silent>'.g:qualia_prefix_key.mapstr.'<CR>'
+            endfor
+            let b:qualia_key_map=1
+        endif
     endfunction
 
-    autocmd VimEnter,BufEnter *.q.md call QualiaMap()
+    autocmd VimEnter,BufEnter *.q.md call qualia#set_key_map()
 endif
 
 
-function! PrettyId()
+function! qualia#pretty_id()
     if !exists('w:matchAdded')
-        for [pattern, cchar] in [['\s*+ [](.\{-})\zs \ze '             , '‣'], 
-                                \['\s*- [](.\{-})\zs \ze '             , '•'], 
+        for [pattern, cchar] in [['\s*1[.)]\zs [](.\{-})\ze  '         , '' ],
                                 \['\s*\zs[\-*+] [](.\{-})\ze  '        , '' ],
+                                \['\s*- [](.\{-})\zs \ze '             , '•'],
+                                \['\s*+ [](.\{-})\zs \ze '             , '‣'], 
                                 \['\s*1[.)] [](.\{-})\zs \ze '         , '┃'], 
-                                \['\s*\zs1[.)]\ze [](.\{-})  '         , ' '], 
-                                \['\s*1[.)]\zs [](.\{-})\ze  '         , '' ]]
+                                \['\s*\zs1[.)]\ze [](.\{-})  '         , ' ']]
             call matchadd('Conceal',pattern, 999, -1, {'conceal':cchar})
         endfor
         let w:matchAdded=1
     endif
 endfunction
-autocmd VimEnter,WinEnter *.q.md call PrettyId()
-
-let g:loaded_qualia = 1
+autocmd VimEnter,WinEnter *.q.md call qualia#pretty_id()

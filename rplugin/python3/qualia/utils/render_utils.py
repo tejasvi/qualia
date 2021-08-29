@@ -1,12 +1,12 @@
 from base64 import b64decode, b64encode
 from difflib import SequenceMatcher
-from typing import Iterator, Callable, Union, cast
+from typing import Iterator, Callable, Union, cast, Optional
 
 from pynvim import Nvim
 from pynvim.api import Buffer
 
 from qualia.config import DEBUG, _EXPANDED_BULLET, _COLLAPSED_BULLET, NEST_LEVEL_SPACES, _SHORT_BUFFER_ID
-from qualia.models import NodeId, BufferNodeId, Cursors
+from qualia.models import NodeId, BufferNodeId, Cursors, BufferContentSetter
 from qualia.utils.common_utils import logger, get_key_val, put_key_val
 
 
@@ -20,11 +20,11 @@ def batch_undo(nvim: Nvim) -> Iterator[None]:
         yield
 
 
-def get_replace_buffer_line(nvim: Nvim) -> Callable[[int, Union[str, list[str]]], None]:
+def get_replace_buffer_line(nvim: Nvim) -> BufferContentSetter:
     setline = nvim.funcs.setline
 
-    def replace_buffer_line(zero_indexed: int, content: Union[str, list[str]]) -> None:
-        assert setline(zero_indexed + 1, content) == 0
+    def replace_buffer_line(zero_idx_line_num: int, content: Union[str, list[str]]) -> None:
+        assert setline(zero_idx_line_num + 1, content) == 0
 
     return replace_buffer_line
 
@@ -33,28 +33,31 @@ def render_buffer(buffer: Buffer, new_content_lines: list[str], nvim: Nvim) -> l
     old_content_lines = list(buffer)
     # Pre-Check common state with == (100x faster than loop)
     if old_content_lines != new_content_lines:
-        line_num = 0
-        for line_num, (old_line, new_line) in enumerate(zip(old_content_lines, new_content_lines)):
+        no_difference = False
+        first_diff_line_num = -1
+        for first_diff_line_num, (old_line, new_line) in enumerate(zip(old_content_lines, new_content_lines)):
             if old_line != new_line:
                 break
+        else:
+            first_diff_line_num += 1
+            no_difference = True
 
         undojoin = batch_undo(nvim)
         next(undojoin)
 
         set_buffer_line = get_replace_buffer_line(nvim)
 
-        line_new_end, line_old_end = different_item_from_end(new_content_lines, old_content_lines, line_num)
-
-        if line_num in (line_old_end, line_new_end):
-            if line_num == line_old_end:
-                set_buffer_line(line_num, new_content_lines[line_num])
-                buffer[line_num + 1:line_num + 1] = new_content_lines[line_num + 1:line_new_end + 1]
+        line_new_end, line_old_end = (None, None) if no_difference else different_item_idxs_from_end( new_content_lines, old_content_lines, first_diff_line_num)
+        if not no_difference and first_diff_line_num in (line_old_end, line_new_end):
+            if first_diff_line_num == line_old_end:
+                set_buffer_line(first_diff_line_num, new_content_lines[first_diff_line_num])
+                buffer[first_diff_line_num + 1:first_diff_line_num + 1] = new_content_lines[ first_diff_line_num + 1:line_new_end + 1]
             else:
-                set_buffer_line(line_num, new_content_lines[line_num])
-                del buffer[line_num + 1:line_old_end + 1]
+                set_buffer_line(first_diff_line_num, new_content_lines[first_diff_line_num])
+                del buffer[first_diff_line_num + 1:line_old_end + 1]
         else:
-            if (len(old_content_lines) - line_num) * (len(new_content_lines) - line_num) > 1e5:
-                buffer[line_num:] = new_content_lines[line_num:]
+            if (len(old_content_lines) - first_diff_line_num) * (len(new_content_lines) - first_diff_line_num) > 1e5:
+                buffer[first_diff_line_num:] = new_content_lines[first_diff_line_num:]
             else:
                 logger.debug("Surgical")
                 surgical_render(buffer, new_content_lines, set_buffer_line, old_content_lines, undojoin)
@@ -67,8 +70,7 @@ def render_buffer(buffer: Buffer, new_content_lines: list[str], nvim: Nvim) -> l
     return old_content_lines
 
 
-def surgical_render(buffer: Buffer, new_content_lines: list[str],
-                    replace_buffer_line: Callable[[int, Union[str, list[str]]], None],
+def surgical_render(buffer: Buffer, new_content_lines: list[str], replace_buffer_line: BufferContentSetter,
                     old_content_lines: list[str], undojoin: Iterator) -> None:
     offset = 0
     for opcode, old_i1, old_i2, new_i1, new_i2 in SequenceMatcher(a=old_content_lines, b=new_content_lines,
@@ -98,10 +100,11 @@ def surgical_render(buffer: Buffer, new_content_lines: list[str],
             offset -= old_i2 - old_i1
 
 
-def different_item_from_end(list1: list, list2: list, minimum_idx: int) -> tuple[int, int]:
+def different_item_idxs_from_end(list1: list, list2: list, minimum_idx: int) -> tuple[Optional[int], Optional[int]]:
     len1 = len(list1)
     len2 = len(list2)
     maximum_idx_rev = min(len1 - minimum_idx, len2 - minimum_idx) - 1
+    assert maximum_idx_rev >= 0
 
     for i_rev, (item1, item2) in enumerate(zip(reversed(list1), reversed(list2))):
         if item1 != item2 or i_rev == maximum_idx_rev:
@@ -134,14 +137,15 @@ def content_lines_to_buffer_lines(content_lines: list[str], node_id: NodeId, lev
 
 
 # misplaced cursor when concealing wide characters (from base65536)
-_buffer_id_encoder: Callable[[bytes], str] = lambda a: b64encode(a).decode().rstrip("=")  # base65536.encode
-_buffer_id_decoder: Callable[[str], bytes] = lambda a: b64decode(a + "==")  # base65536.decode
+_buffer_id_encoder: Callable[[bytes], BufferNodeId] = lambda a: cast(BufferNodeId, b64encode(a).decode().rstrip(
+    "="))  # base65536.encode
+_buffer_id_decoder: Callable[[BufferNodeId], bytes] = lambda a: b64decode(a + "==")  # base65536.decode
 
 
 def node_to_buffer_id(node_id: NodeId, cursors: Cursors) -> BufferNodeId:
     if not _SHORT_BUFFER_ID:
         return cast(BufferNodeId, node_id)
-    buffer_node_id = cast(BufferNodeId, get_key_val(node_id, cursors.node_to_buffer_id))
+    buffer_node_id = cast(Optional[BufferNodeId], get_key_val(node_id, cursors.node_to_buffer_id, False))
     if buffer_node_id is None:
         if cursors.buffer_to_node_id.last():
             last_buffer_id: BufferNodeId = cursors.buffer_to_node_id.key().decode()
@@ -153,7 +157,7 @@ def node_to_buffer_id(node_id: NodeId, cursors: Cursors) -> BufferNodeId:
             buffer_id_bytes = (0).to_bytes(1, 'big')
         # base65536 doesn't output brackets https://qntm.org/safe
         # base65536 gives single character for 16bits == 2bytes
-        buffer_node_id: str = _buffer_id_encoder(buffer_id_bytes)
+        buffer_node_id = _buffer_id_encoder(buffer_id_bytes)
         put_key_val(node_id, buffer_node_id, cursors.node_to_buffer_id, True)
         put_key_val(buffer_node_id, node_id, cursors.buffer_to_node_id, True)
     return cast(BufferNodeId, buffer_node_id)

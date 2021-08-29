@@ -1,21 +1,13 @@
-from __future__ import annotations
-
-from os import chmod, PathLike
 from pathlib import Path
-from shutil import rmtree
-from stat import S_IWRITE
-from typing import Callable
 
-from appdirs import user_data_dir
+from appdirs import user_data_dir, user_config_dir
 
-DEBUG = True
-NVIM_DEBUG_PIPE = r'\\.\pipe\nvim-15600-0'  # E.g. nvim --listen \\.\pipe\nvim-15600-0 test.md
-
-QUALIA_DATA_DIR = user_data_dir("qualianotes", "qualia")
-if DEBUG:
-    QUALIA_DATA_DIR += '_debug'
+from qualia.utils.config_utils import create_directory_if_absent, force_remove_directory
 
 FIREBASE_WEB_APP_CONFIG = {
+    # On https://console.firebase.google.com (free plan),
+    # Go to Project Settings -> Add app -> "</>" (web app option)
+    # Set name -> Continue -> Use the displayed "firebaseConfig"
     "apiKey": "AIzaSyDFNIazv7K0qDDJriiYPbhmB3OzUJYJvMI",
     "authDomain": "qualia-321013.firebaseapp.com",
     "databaseURL": "https://qualia-321013-default-rtdb.firebaseio.com",
@@ -26,36 +18,37 @@ FIREBASE_WEB_APP_CONFIG = {
     "measurementId": "G-BPNP22GS5X"
 }
 
-GIT_TOKEN = 'ghp_QJSHBmXvDAbjiiI' 'BHTDEb3yryLofv52dcTbP'
+_GIT_TOKEN = 'ghp_QJSHBmXvDAbjiiI' 'BHTDEb3yryLofv52dcTbP'
+_GIT_REPOSITORY = "github.com/tejasvi8874/test"
+GIT_TOKEN_URL = f"https://{_GIT_TOKEN}@{_GIT_REPOSITORY}"
+GIT_SEARCH_URL = f"https://{_GIT_REPOSITORY}/search?q="
 GIT_BRANCH = "master"
-GIT_REPOSITORY = "github.com/tejasvi8874/test"
-GIT_TOKEN_URL = f"https://{GIT_TOKEN}@{GIT_REPOSITORY}"
-GIT_SEARCH_URL = f"https://{GIT_REPOSITORY}/search?q="
 
 NEST_LEVEL_SPACES = 4
+
+DEBUG = True
+NVIM_DEBUG_PIPE = r'\\.\pipe\nvim-15600-0'  # E.g. nvim --listen \\.\pipe\nvim-15600-0 test.md
+
+QUALIA_DATA_DIR = user_data_dir("qualianotes", "qualia")
+if DEBUG:
+    QUALIA_DATA_DIR += '_debug'
 
 # Internal constants
 
 _APP_FOLDER_PATH = Path(QUALIA_DATA_DIR)
+_RESET_APP_FOLDER = False
+if _RESET_APP_FOLDER:
+    force_remove_directory(_APP_FOLDER_PATH)
 
 _FILE_FOLDER = _APP_FOLDER_PATH.joinpath("files")
 _DB_FOLDER = _APP_FOLDER_PATH.joinpath("db")
 _GIT_FOLDER = _APP_FOLDER_PATH.joinpath("git")
 _LOG_FILENAME = _APP_FOLDER_PATH.joinpath('logs')
 
+for path in (_APP_FOLDER_PATH, _FILE_FOLDER, _GIT_FOLDER, _DB_FOLDER):
+    create_directory_if_absent(path)
+
 _SHORT_BUFFER_ID = True
-
-_RESET_APP_FOLDER = True
-if _RESET_APP_FOLDER:
-    def onerror(func: Callable[[PathLike], None], path: PathLike, exc_info) -> None:
-        if exc_info[0] is FileNotFoundError:
-            pass
-        else:
-            chmod(path, S_IWRITE)
-            func(path)
-
-
-    rmtree(_APP_FOLDER_PATH, onerror=onerror)
 
 _EXPANDED_BULLET = '-'
 _TO_EXPAND_BULLET = '*'
@@ -67,3 +60,4 @@ _ROOT_ID_KEY = "root_id"
 _CLIENT_KEY = "client"
 
 _GIT_FLAG_ARG = "git"
+_LOGGER_NAME = "qualia"

@@ -5,21 +5,20 @@ from sys import path
 
 path.append(Path(__file__).parent.parent.as_posix())  # noqa: E402
 
-from subprocess import CalledProcessError
-from traceback import format_exception
 from typing import cast
 
 from qualia.config import _ROOT_ID_KEY, GIT_BRANCH, GIT_TOKEN_URL
-from qualia.models import ProcessState, Cursors, NodeId
-from qualia.sync import sync_with_db
-from qualia.utils.bootstrap_utils import bootstrap
-from qualia.utils.common_utils import cd_run_git_cmd, Database, file_name_to_node_id, get_key_val, logger
-from qualia.utils.git_utils import create_markdown_file, pop_unsynced_nodes, get_file_content_children, \
+from qualia.models import ProcessState, Cursors, NodeId, CustomCalledProcessError
+from qualia.utils.bootstrap_utils import bootstrap, repository_setup
+from qualia.utils.common_utils import cd_run_git_cmd, Database, file_name_to_node_id, get_key_val, logger, \
+    exception_traceback, sync_with_db
+from qualia.services.utils.git_utils import create_markdown_file, pop_unsynced_nodes, get_file_content_children, \
     GitInit
 
 
 def sync_with_git() -> None:
     logger.critical("Git sync started")
+    assert repository_setup.wait(60), "Repository setup not yet finished"
     try:
         with GitInit():
             changed_file_names = fetch_from_remote()
@@ -29,7 +28,7 @@ def sync_with_git() -> None:
             push_to_remote()
     except Exception as e:
         logger.critical(
-            "Error while syncing with git\n" + '\n'.join(format_exception(None, e, e.__traceback__)))
+            "Error while syncing with git\n" + exception_traceback(e))
         raise e
 
 
@@ -37,18 +36,18 @@ def fetch_from_remote() -> list[str]:
     cd_run_git_cmd(["add", "-A"])
     try:
         cd_run_git_cmd(["commit", "-am", "Unknown changes"])
-    except CalledProcessError:
+    except CustomCalledProcessError:
         pass
     try:
         cd_run_git_cmd(["fetch", GIT_TOKEN_URL, GIT_BRANCH])
-    except CalledProcessError:
+    except CustomCalledProcessError:
         logger.critical("Couldn't fetch")
         return []
     else:
         commit_has_before_merge = cd_run_git_cmd(["rev-parse", "HEAD"])
         try:
             cd_run_git_cmd(["merge", "FETCH_HEAD"])
-        except CalledProcessError as exp:
+        except CustomCalledProcessError as exp:
             raise exp
             # if cd_run_git_cmd(["ls-files", "-u"]):
             #     cd_run_git_cmd(["commit", "-A", "Merge  conflicts"])
@@ -66,8 +65,8 @@ def push_to_remote() -> None:
         cd_run_git_cmd(["commit", "-m", "Vim"])
         try:
             cd_run_git_cmd(["push", "-u", GIT_TOKEN_URL, GIT_BRANCH])
-        except CalledProcessError:
-            logger.critical("Could not push")
+        except CustomCalledProcessError as e:
+            logger.critical("Could not push: " + str(e))
 
 
 def directory_to_db(cursors: Cursors, changed_file_names: list[str]) -> None:
@@ -82,7 +81,7 @@ def directory_to_db(cursors: Cursors, changed_file_names: list[str]) -> None:
             else:
                 with open(file_path) as f:
                     content_lines, children_ids = get_file_content_children(f)
-                    process_state.changed_children_map[node_id] = children_ids
+                    process_state.changed_descendants_map[node_id] = children_ids
                     process_state.changed_content_map[node_id] = content_lines
 
     if process_state:
@@ -92,7 +91,7 @@ def directory_to_db(cursors: Cursors, changed_file_names: list[str]) -> None:
 
 
 def db_to_directory(cursors: Cursors) -> None:
-    root_id = cast(NodeId, get_key_val(_ROOT_ID_KEY, cursors.metadata))
+    root_id = cast(NodeId, get_key_val(_ROOT_ID_KEY, cursors.metadata, True))
     node_stack = [root_id]
     while node_stack:
         node_id = node_stack.pop()

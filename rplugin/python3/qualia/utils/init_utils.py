@@ -1,7 +1,12 @@
+import logging
+from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from os import environ, name, pathsep
 from pathlib import Path
 from subprocess import run
 from sys import executable
+
+from qualia.config import _LOG_FILENAME
 
 
 def get_location(exe_name: str) -> str:
@@ -18,7 +23,7 @@ def cmd(*args, **kwargs) -> None:
         raise ProcessException(res.returncode, (str(args) + str(kwargs))[20:], res.stdout, res.stderr)
 
 
-def install_qualia_dependencies(optional_install_dir: str) -> None:
+def install_dependencies(optional_install_dir: str) -> None:
     try:
         cmd([executable, "-m", "ensurepip", "--default-pip"])
     except ProcessException:
@@ -51,3 +56,14 @@ def install_qualia_dependencies(optional_install_dir: str) -> None:
             except ProcessException:
                 for pkg in (["setuptools", "wheel"], ["-r", requirements_file_path]):
                     cmd([get_location("pip"), "install"] + pkg, env=env)
+
+
+def setup_logger(logger: logging.Logger) -> None:
+    logger.setLevel(logging.DEBUG if logging.DEBUG else logging.INFO)
+    file_handler = RotatingFileHandler(filename=_LOG_FILENAME, mode='w', maxBytes=512000, backupCount=4)
+    formatter = logging.Formatter(fmt='%(asctime)s %(levelname)-8s [%(threadName)-12.12s] %(message)s',
+                                  datefmt='%Y-%m-%d %H:%M:%S')
+    file_handler.setFormatter(formatter)
+    for handler in (file_handler, logging.StreamHandler()):
+        logger.addHandler(handler)
+    logger.critical("== STARTING on " + datetime.today().isoformat() + " ==")

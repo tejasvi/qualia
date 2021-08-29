@@ -11,5 +11,6 @@ typing-extensions
 
 git+https://github.com/tejasvi/Pyrebase.git
 FirebaseData
+firebase-admin
 ntplib
 requests

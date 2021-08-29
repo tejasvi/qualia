@@ -1,44 +1,53 @@
 from time import time, sleep
-from traceback import format_exception
 from typing import Optional
 
 from pynvim import plugin, Nvim, autocmd, command, attach, function
 
 from qualia.config import _FZF_LINE_DELIMITER, NVIM_DEBUG_PIPE
-from qualia.driver import NvimDriver
+from qualia.driver import PluginDriver
 from qualia.models import NodeId
-from qualia.search import matching_nodes_content
-from qualia.sync import save_root_view
+from qualia.services.search import matching_nodes_content, fzf_input_line
 from qualia.utils.bootstrap_utils import bootstrap
-from qualia.utils.common_utils import Database
+from qualia.utils.common_utils import Database, exception_traceback, normalized_prefixes, save_root_view, logger, \
+    get_node_content
+from qualia.utils.plugin_utils import get_orphan_node_ids, PluginUtils
 from qualia.utils.perf_utils import start_time
-from qualia.utils.search_utils import normalized_prefixes
 
 
 @plugin
-class Qualia(NvimDriver):
-    def __init__(self, nvim: Nvim, debugging: bool = False):
-        super().__init__(nvim, debugging)
-        bootstrap()
+class Qualia(PluginDriver):
+    def __init__(self, nvim: Nvim, ide_debugging: bool = False):
+        # First task on load
+        try:
+            bootstrap()
+            super().__init__(nvim, ide_debugging)
+        except Exception as e:
+            logger.critical("Error during initialization" + exception_traceback(e))
 
     @autocmd("TextChanged,FocusGained,BufEnter,InsertLeave,BufLeave,BufFilePost,BufAdd,CursorHold", pattern='*.q.md',
              sync=True, allow_nested=False, eval=None)
     def trigger_sync(self, *_args) -> None:
-        if self.debugging or not self.should_continue():
+        if self.ide_debugging or not self.should_continue(False):
             return
         try:
             self.main(None, None)
         except Exception as e:
             self.nvim.err_write(
-                "\nSomething went wrong :(\n\n" + '\n'.join(format_exception(None, e, e.__traceback__)))
+                "\nSomething went wrong :(\n\n" + exception_traceback(e))
+
+    @command("TriggerSync", sync=True)
+    def trigger_sync_command(self) -> None:
+        self.nvim.out_write("Begin\n")
+        if self.should_continue(True):
+            self.main(None, None)
 
     @command("NavigateNode", sync=True, nargs='?')
-    def navigate_cur_node(self, args: list[NodeId]) -> None:
+    def navigate_cur_node(self, args: list[NodeId] = None) -> None:
         node_id = (args and args[0]) or self.line_info(self.current_line_number()).node_id
         self.navigate_node(node_id, False)
 
     @command("HoistNode", sync=True)
-    def hoist_node(self, *_args) -> None:
+    def hoist_node(self) -> None:
         line_num = self.current_line_number()
         view = self.line_node_view(line_num)
         with Database() as cursors:
@@ -46,13 +55,13 @@ class Qualia(NvimDriver):
         self.navigate_node(view.main_id, True)
 
     @command("ToggleParser", sync=True)
-    def toggle_parser(self, *_args) -> None:
+    def toggle_parser(self) -> None:
         self.enabled = not self.enabled
         if self.enabled:
             self.trigger_sync()
 
     @command("ToggleFold", sync=True, nargs='?')
-    def toggle_fold(self, args: list[int]) -> None:
+    def toggle_fold(self, args: list[int] = None) -> None:
         cur_line_info = self.line_info(self.current_line_number())
 
         if cur_line_info is self.line_info(0):
@@ -82,7 +91,7 @@ class Qualia(NvimDriver):
             self.main(None, fold_level)
 
     @command("TransposeNode", sync=True, nargs='?')
-    def transpose(self, args: list[str]) -> None:
+    def transpose(self, args: list[str] = None) -> None:
         currently_transposed = self.buffer_transposed(self.nvim.current.buffer.name)
         node_id = self.line_info(self.current_line_number()).node_id
         try:
@@ -93,9 +102,7 @@ class Qualia(NvimDriver):
         else:
             self.replace_with_file(self.node_id_to_filepath(node_id, not currently_transposed), replace_buffer)
 
-    fzf_sink_command = "NodeFzfSink"
-
-    @command(fzf_sink_command, nargs=1, sync=True)
+    @command(PluginUtils.fzf_sink_command, nargs=1, sync=True)
     def fzf_sink(self, selections: list[str]):
         for i, selected in enumerate(selections):
             node_id = NodeId(selected[:selected.index(_FZF_LINE_DELIMITER)])
@@ -109,13 +116,26 @@ class Qualia(NvimDriver):
     def search_nodes(self, query_strings: list[str]) -> None:
         prefixes = normalized_prefixes(' '.join(query_strings))
         fzf_lines = matching_nodes_content(prefixes)
-        self.nvim.call("fzf#run",
-                       {'source': fzf_lines, 'sink': self.fzf_sink_command, 'window': {'width': 0.95, 'height': 0.98},
-                        'options': ['--delimiter', _FZF_LINE_DELIMITER, '--with-nth', '2..',
-                                    '--query', ' '.join(query_strings)]})
+        self.fzf_run(fzf_lines, ' '.join(query_strings))
+
+    @command("ListOrphans", sync=True)
+    def list_orphans(self) -> None:
+        with Database() as cursors:
+            orphan_node_ids = get_orphan_node_ids(cursors)
+            orphan_fzf_lines = [fzf_input_line(node_id, get_node_content(cursors, node_id)) for node_id in
+                                orphan_node_ids]
+        self.fzf_run(orphan_fzf_lines, '')
+
+    @command("RemoveOrphans", sync=True, nargs='?')
+    def remove_orphans(self, args: list[int] = None) -> None:
+        skip_confirm = args and int(args[0])
+        if skip_confirm or self.nvim.funcs.confirm("Remove orphans?", "&Be kind\n&Yes", 1) == 2:
+            with Database() as cursors:
+                for orphan_node_id in get_orphan_node_ids(cursors):
+                    cursors.children.delete(orphan_node_id)
 
     @function("CurrentNodeId", sync=True)
-    def search_nodes(self, line_num: list[int]) -> NodeId:
+    def current_node_id(self, line_num: list[int]) -> NodeId:
         return self.line_info(line_num[0] if line_num else self.current_line_number()).node_id
 
     @autocmd("VimEnter", pattern='*.q.md', sync=True)
@@ -128,7 +148,8 @@ class Qualia(NvimDriver):
 if __name__ == "__main__":
     nvim_debug = attach('socket', path=NVIM_DEBUG_PIPE)  # path=environ['NVIM_LISTEN_ADDRESS'])
     qualia_debug = Qualia(nvim_debug, True)
+    sleep(1e5)
     while True:
-        if qualia_debug.should_continue():
+        if qualia_debug.should_continue(False):
             qualia_debug.main(None, None)
         sleep(0.01)
