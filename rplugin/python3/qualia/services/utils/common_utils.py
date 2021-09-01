@@ -5,7 +5,7 @@ from typing import Callable
 from qualia.utils.common_utils import StartLoggedThread, logger, exception_traceback
 
 
-def get_trigger_event(callback: Callable, throttle_seconds: int) -> Event:
+def get_trigger_event(callback: Callable, throttle_seconds: float) -> Event:
     service_event = Event()
 
     def event_watcher() -> None:
