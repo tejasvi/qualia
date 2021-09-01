@@ -3,13 +3,16 @@ from __future__ import annotations
 from collections import UserDict
 from dataclasses import dataclass
 from subprocess import CalledProcessError
-from typing import NewType, Union, Any, Optional, Tuple, Dict, MutableMapping, List, Callable
+from typing import NewType, Union, Optional, Tuple, Dict, MutableMapping, List, Callable
 
 from lmdb import Cursor
 from orderedset import OrderedSet
 from typing_extensions import TypedDict
 
 NodeId = NewType("NodeId", str)
+StringifiedChildren = NewType("StringifiedChildren", str)
+StringifiedContent = NewType("StringifiedContent", str)
+Stringified = Union[StringifiedContent, StringifiedChildren]
 BufferId = Tuple[int, str]
 BufferNodeId = NewType("BufferNodeId", str)
 Tree = Dict[NodeId, Optional[dict]]
@@ -69,10 +72,14 @@ class CustomCalledProcessError(CalledProcessError):
         self.__dict__.update(exp.__dict__)
 
     def __str__(self) -> str:
-        return super().__str__() + self.stderr + self.stdout
+        return super().__str__() + str(self.stderr) + str(self.stdout)
 
 
-class LastSeen(UserDict, MutableMapping[NodeId, NodeData]):
+class GitMergeError(CustomCalledProcessError):
+    pass
+
+
+class LastSync(UserDict, MutableMapping[NodeId, NodeData]):
     def __init__(self) -> None:
         super().__init__()
         self.data: Dict[NodeId, NodeData] = {}
@@ -86,7 +93,7 @@ class LastSeen(UserDict, MutableMapping[NodeId, NodeData]):
         self.data.pop(node_id)
 
 
-JSONType = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
+JSONType = Union[str, int, float, bool, None, Dict[str, object], List[object]]
 NODE_ID_ATTR = "node_id"
 
 
@@ -111,18 +118,27 @@ class Cursors:
     transposed_views: Cursor
 
 
-ChildrenConflictData = dict[NodeId, tuple[str, List[NodeId]]]
-ContentConflictData = dict[NodeId, tuple[str, List[str]]]
-ConflictData = Union[ChildrenConflictData, ContentConflictData]
-
-RealtimeChildrenData = Dict[NodeId, Tuple[str, List[NodeId]]]
-RealtimeContentData = Dict[NodeId, Tuple[str, List[Union[str, NodeId]]]]
+class RealtimeDbIndexDisabledError(Exception):
+    def __init__(self, e) -> None:
+        super().__init__(
+            'Ensure {"rules": {"connections": {".indexOn": ".value"}}} in Realtime Database rules section\n' + str(e))
 
 
-class RealtimeData(TypedDict, total=False):
-    children: RealtimeChildrenData
-    content: RealtimeContentData
+RealtimeSyncChildren = dict[NodeId, tuple[str, List[NodeId]]]
+RealtimeSyncContent = dict[NodeId, tuple[str, List[str]]]
+RealtimeSyncData = Union[RealtimeSyncChildren, RealtimeSyncContent]
+
+RealtimeChildren = Dict[NodeId, Tuple[str, StringifiedChildren]]
+RealtimeContent = Dict[NodeId, Tuple[str, StringifiedContent]]
+RealtimeData = Union[RealtimeChildren, RealtimeContent]
+
+
+class RealtimeSync(TypedDict, total=False):
+    children: RealtimeSyncChildren
+    content: RealtimeSyncContent
     client_id: str
+    timestamp: int
 
 
 BufferContentSetter = Callable[[int, Union[str, list[str]]], None]
+GitChangedNodes = dict[NodeId, tuple[OrderedSet[NodeId], list[str]]]

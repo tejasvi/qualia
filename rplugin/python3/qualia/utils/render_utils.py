@@ -33,25 +33,28 @@ def render_buffer(buffer: Buffer, new_content_lines: list[str], nvim: Nvim) -> l
     old_content_lines = list(buffer)
     # Pre-Check common state with == (100x faster than loop)
     if old_content_lines != new_content_lines:
-        no_difference = False
+        line_conflict = True
         first_diff_line_num = -1
         for first_diff_line_num, (old_line, new_line) in enumerate(zip(old_content_lines, new_content_lines)):
             if old_line != new_line:
                 break
         else:
             first_diff_line_num += 1
-            no_difference = True
+            line_conflict = False
 
         undojoin = batch_undo(nvim)
         next(undojoin)
 
         set_buffer_line = get_replace_buffer_line(nvim)
 
-        line_new_end, line_old_end = (None, None) if no_difference else different_item_idxs_from_end( new_content_lines, old_content_lines, first_diff_line_num)
-        if not no_difference and first_diff_line_num in (line_old_end, line_new_end):
+        line_new_end, line_old_end = different_item_idxs_from_end(new_content_lines, old_content_lines,
+                                                                  first_diff_line_num) if line_conflict else (
+        None, None)
+        if line_conflict and first_diff_line_num in (line_old_end, line_new_end):
             if first_diff_line_num == line_old_end:
                 set_buffer_line(first_diff_line_num, new_content_lines[first_diff_line_num])
-                buffer[first_diff_line_num + 1:first_diff_line_num + 1] = new_content_lines[ first_diff_line_num + 1:line_new_end + 1]
+                buffer[first_diff_line_num + 1:first_diff_line_num + 1] = new_content_lines[
+                                                                          first_diff_line_num + 1:line_new_end + 1]
             else:
                 set_buffer_line(first_diff_line_num, new_content_lines[first_diff_line_num])
                 del buffer[first_diff_line_num + 1:line_old_end + 1]
@@ -100,7 +103,7 @@ def surgical_render(buffer: Buffer, new_content_lines: list[str], replace_buffer
             offset -= old_i2 - old_i1
 
 
-def different_item_idxs_from_end(list1: list, list2: list, minimum_idx: int) -> tuple[Optional[int], Optional[int]]:
+def different_item_idxs_from_end(list1: list, list2: list, minimum_idx: int) -> tuple[int, int]:
     len1 = len(list1)
     len2 = len(list2)
     maximum_idx_rev = min(len1 - minimum_idx, len2 - minimum_idx) - 1

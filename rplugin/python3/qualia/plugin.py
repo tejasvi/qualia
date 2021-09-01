@@ -1,4 +1,4 @@
-from time import time, sleep
+from time import sleep
 from typing import Optional
 
 from pynvim import plugin, Nvim, autocmd, command, attach, function
@@ -8,38 +8,32 @@ from qualia.driver import PluginDriver
 from qualia.models import NodeId
 from qualia.services.search import matching_nodes_content, fzf_input_line
 from qualia.utils.bootstrap_utils import bootstrap
-from qualia.utils.common_utils import Database, exception_traceback, normalized_prefixes, save_root_view, logger, \
-    get_node_content
+from qualia.utils.common_utils import Database, exception_traceback, normalized_search_prefixes, save_root_view, \
+    get_node_content, delete_node, logger
 from qualia.utils.plugin_utils import get_orphan_node_ids, PluginUtils
-from qualia.utils.perf_utils import start_time
 
 
 @plugin
 class Qualia(PluginDriver):
     def __init__(self, nvim: Nvim, ide_debugging: bool = False):
-        # First task on load
         try:
             bootstrap()
             super().__init__(nvim, ide_debugging)
         except Exception as e:
             logger.critical("Error during initialization" + exception_traceback(e))
+            raise e
 
     @autocmd("TextChanged,FocusGained,BufEnter,InsertLeave,BufLeave,BufFilePost,BufAdd,CursorHold", pattern='*.q.md',
              sync=True, allow_nested=False, eval=None)
-    def trigger_sync(self, *_args) -> None:
-        if self.ide_debugging or not self.should_continue(False):
+    def trigger_sync(self, *args) -> None:
+        logger.critical("Trigger")
+        if self.ide_debugging or not self.should_continue(True if args and int(args[0]) else False):
             return
         try:
             self.main(None, None)
         except Exception as e:
             self.nvim.err_write(
                 "\nSomething went wrong :(\n\n" + exception_traceback(e))
-
-    @command("TriggerSync", sync=True)
-    def trigger_sync_command(self) -> None:
-        self.nvim.out_write("Begin\n")
-        if self.should_continue(True):
-            self.main(None, None)
 
     @command("NavigateNode", sync=True, nargs='?')
     def navigate_cur_node(self, args: list[NodeId] = None) -> None:
@@ -114,42 +108,42 @@ class Qualia(PluginDriver):
 
     @command("SearchQualia", sync=True, nargs='*')
     def search_nodes(self, query_strings: list[str]) -> None:
-        prefixes = normalized_prefixes(' '.join(query_strings))
+        prefixes = normalized_search_prefixes(' '.join(query_strings))
         fzf_lines = matching_nodes_content(prefixes)
         self.fzf_run(fzf_lines, ' '.join(query_strings))
 
     @command("ListOrphans", sync=True)
     def list_orphans(self) -> None:
         with Database() as cursors:
-            orphan_node_ids = get_orphan_node_ids(cursors)
             orphan_fzf_lines = [fzf_input_line(node_id, get_node_content(cursors, node_id)) for node_id in
-                                orphan_node_ids]
+                                get_orphan_node_ids(cursors)]
         self.fzf_run(orphan_fzf_lines, '')
 
     @command("RemoveOrphans", sync=True, nargs='?')
     def remove_orphans(self, args: list[int] = None) -> None:
         skip_confirm = args and int(args[0])
-        if skip_confirm or self.nvim.funcs.confirm("Remove orphans?", "&Be kind\n&Yes", 1) == 2:
-            with Database() as cursors:
-                for orphan_node_id in get_orphan_node_ids(cursors):
-                    cursors.children.delete(orphan_node_id)
+        if not (skip_confirm or self.nvim.funcs.confirm("Remove orphans?", "&Be kind\n&Yes", 1) == 2):
+            return
+        with Database() as cursors:
+            for orphan_node_id in get_orphan_node_ids(cursors):
+                delete_node(cursors, orphan_node_id)
 
     @function("CurrentNodeId", sync=True)
     def current_node_id(self, line_num: list[int]) -> NodeId:
         return self.line_info(line_num[0] if line_num else self.current_line_number()).node_id
 
-    @autocmd("VimEnter", pattern='*.q.md', sync=True)
-    def log_startup_time(self, *_args) -> None:
-        load_time = time() - start_time
-        if True or load_time > 0.1:
-            self.print_message(f"{round(load_time, 2)}s")
-
 
 if __name__ == "__main__":
     nvim_debug = attach('socket', path=NVIM_DEBUG_PIPE)  # path=environ['NVIM_LISTEN_ADDRESS'])
     qualia_debug = Qualia(nvim_debug, True)
-    sleep(1e5)
     while True:
-        if qualia_debug.should_continue(False):
-            qualia_debug.main(None, None)
+        try:
+            if qualia_debug.should_continue(False):
+                qualia_debug.main(None, None)
+        except OSError as exp:
+            # if "EOF" in str(exp):
+            #     logger.debug(exp)
+            # else:
+            raise exp
+
         sleep(0.01)

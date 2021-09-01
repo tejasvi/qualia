@@ -9,7 +9,7 @@ from markdown_it.token import Token
 from markdown_it.tree import SyntaxTreeNode
 
 from qualia.config import _COLLAPSED_BULLET, _TO_EXPAND_BULLET, _SHORT_BUFFER_ID
-from qualia.models import NODE_ID_ATTR, Tree, NodeId, BufferNodeId, DuplicateNodeException, LastSeen, \
+from qualia.models import NODE_ID_ATTR, Tree, NodeId, BufferNodeId, DuplicateNodeException, LastSync, \
     UncertainNodeChildrenException, AstMap
 from qualia.utils.common_utils import removeprefix, get_time_uuid, get_key_val
 
@@ -92,7 +92,8 @@ def merge_every_type_sibling_lists(descendant_list_asts: list[SyntaxTreeNode]) -
             assert last_nester_tokens
 
             token_obj = last_descendant_list_ast.token or last_nester_tokens.opening
-            token_obj.map = [cast(AstMap, last_descendant_list_ast.map)[0], cast(AstMap, cur_descendant_list_ast.map)[1]]
+            token_obj.map = [cast(AstMap, last_descendant_list_ast.map)[0],
+                             cast(AstMap, cur_descendant_list_ast.map)[1]]
 
             if cur_type == 'ordered_list' and last_type == "bullet_list":
                 copy_list_ast_type(last_descendant_list_ast, cur_descendant_list_ast)
@@ -123,29 +124,31 @@ def copy_list_ast_type(target_list_ast: SyntaxTreeNode, source_list_ast: SyntaxT
 
 
 def preserve_expand_consider_sub_tree(list_item_ast: SyntaxTreeNode, node_id: NodeId, sub_list_tree: Tree,
-                                      last_seen: LastSeen):
+                                      last_sync: LastSync):
     bullet = list_item_ast.markup
 
     assert list_item_ast.parent
-    parent_ast = list_item_ast.previous_sibling if (list_item_ast.parent.type == 'ordered_list'
-                                                    and list_item_ast.previous_sibling) else list_item_ast.parent.parent
-    assert parent_ast is not None
-    parent_node_id = parent_ast.meta[NODE_ID_ATTR]
+    ancestor_ast = list_item_ast.previous_sibling if (
+            list_item_ast.parent.type == 'ordered_list' and list_item_ast.previous_sibling
+    ) else list_item_ast.parent.parent
+    assert ancestor_ast is not None
+    ancestor_node_id = ancestor_ast.meta[NODE_ID_ATTR]
 
-    not_new = parent_node_id in last_seen and node_id in last_seen[parent_node_id].descendants_ids
+    not_new_descendant = ancestor_node_id in last_sync and node_id in last_sync[ancestor_node_id].descendants_ids
 
-    if not_new:
+    if not_new_descendant:
         consider_sub_tree = bullet not in (_COLLAPSED_BULLET, _TO_EXPAND_BULLET)
     else:
         if sub_list_tree:
-            if node_id in last_seen and last_seen[node_id].descendants_ids.symmetric_difference(sub_list_tree.keys()):
+            if node_id in last_sync and last_sync[node_id].descendants_ids.symmetric_difference(sub_list_tree.keys()):
                 raise UncertainNodeChildrenException(node_id, cast(AstMap, list_item_ast.map))
             else:
                 consider_sub_tree = True
         else:
             consider_sub_tree = False
 
-    expand = bullet == _TO_EXPAND_BULLET or (bullet != _COLLAPSED_BULLET and sub_list_tree)
+    expand = bullet != _COLLAPSED_BULLET
+    # expand = bullet == _TO_EXPAND_BULLET or (bullet != _COLLAPSED_BULLET and sub_list_tree)  # Why?
 
     return expand, consider_sub_tree
 

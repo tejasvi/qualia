@@ -1,156 +1,111 @@
 from __future__ import annotations
 
-from threading import Event
-from time import sleep, time
-from typing import Final
-from typing import TYPE_CHECKING
+from threading import current_thread
+from time import sleep
+from typing import TYPE_CHECKING, Callable
 
-# from firebasedata import LiveData, FirebaseData
-from ntplib import NTPClient
-from pynvim import Nvim
-
-from qualia.config import FIREBASE_WEB_APP_CONFIG
-from qualia.models import RealtimeData
-from qualia.services.utils.realtime_utils import process_children_broadcast, process_content_broadcast
+from qualia.config import FIREBASE_WEB_APP_CONFIG, DEBUG
+from qualia.models import RealtimeSync, RealtimeDbIndexDisabledError
+from qualia.services.utils.common_utils import get_trigger_event
+from qualia.services.utils.realtime_utils import process_children_broadcast, process_content_broadcast, CHILDREN_KEY, \
+    CONTENT_KEY, RealtimeUtils, network_errors, tuplify_values
 from qualia.utils.bootstrap_utils import bootstrap
-from qualia.utils.common_utils import Database, logger, exception_traceback, StartLoggedThread, \
-    get_set_client
+from qualia.utils.common_utils import Database, logger, exception_traceback, StartLoggedThread
 
-# for deferred_import in ("pyrebase", "requests"):
-#     if find_spec(deferred_import) is None:
-#         raise ModuleNotFoundError(f"No module named '{deferred_import}'")
-
-if TYPE_CHECKING:
-    from pyrebase.pyrebase import Pyre
-    from pyrebase import pyrebase
-
-CHILDREN_KEY: Final = "children"
-CONTENT_KEY: Final = "content"
+if TYPE_CHECKING or DEBUG:
+    from firebase_admin.db import Event as FirebaseEvent
 
 
-class Realtime:
-    db: pyrebase.Database
-    # live_data: LiveData
-    client_id: str
-    offset_seconds: float
-
-    def __init__(self, nvim: Nvim) -> None:
+class Realtime(RealtimeUtils):
+    def __init__(self, buffer_sync_trigger: Callable) -> None:
+        super().__init__()
         logger.critical("Enter")
-        self.nvim = nvim
-        self.others_online: bool = False
-        self.initialization_event = Event()
+        # self.nvim = nvim
+        self.unsynced_changes_event = get_trigger_event(buffer_sync_trigger, 0)
         StartLoggedThread(target=self.initialize, name="InitRealtime")
 
-    def initialize(self) -> None:
-        logger.debug("Initializing")
-        with Database() as cursors:
-            self.client_id = get_set_client(cursors.metadata)["client_id"]
-        while True:
-            try:
-                self.offset_seconds = NTPClient().request('pool.ntp.org').offset
-                self.connect_firebase()
-            except ConnectionError as e:
-                logger.critical("Couldn't connect to firebase\n" + exception_traceback(e))
-                sleep(5)
-            except Exception as e:
-                logger.critical("Firebase error\n" + exception_traceback(e))
-                break
-            else:
-                self.initialization_event.set()
-                break
-
     def connect_firebase(self) -> None:
+        import firebase_admin  # Takes ~0.8 s
+        import firebase_admin.db as db
+
         logger.debug("Connecting firebase")
-        try:
-            from pyrebase import pyrebase  # Blocks thread for a while
-        except (ModuleNotFoundError, ImportError) as e:
-            logger.critical("Pyrebase not installed")
-            raise e
-        app = pyrebase.initialize_app(FIREBASE_WEB_APP_CONFIG)
-        # self.live_data = live_data = LiveData(app, '/')
-        # live_data.listen()
-        self.db = app.database()
+        default_app = firebase_admin.initialize_app(options=FIREBASE_WEB_APP_CONFIG)
 
-        # live_data.signal('/data').connect(self._broadcast_listener)
-        self.db.child("data").stream(self._broadcast_listener)
-        # live_data.signal('/connections').connect(self._new_client_listener)
-        self.db.child('connections').stream(self._new_client_listener)
-        logger.debug("Before online")
-        logger.debug("Online update")
-        StartLoggedThread(target=self._update_online_status, name="UpdateOnline")
+        self.data_ref = db.reference('/data', default_app)
+        self.data_ref.listen(self.broadcast_listener)
 
-    def _accurate_seconds(self) -> int:
-        return int(self.offset_seconds + time())
+        self.connections_ref = db.reference('/connections', default_app)
+        self.others_online = self.check_others_online()
+        self.connections_ref.listen(self.new_client_listener)
 
-    def _update_online_status(self) -> None:
+        StartLoggedThread(target=self.update_online_status, name="UpdateOnlineStatus")
+
+    def update_online_status(self) -> None:
+        from requests import HTTPError
         logger.debug("In online update")
-        from requests import HTTPError, ConnectionError  # Takes ~0.1s
         try:
             while True:
-                cur_time_sec = self._accurate_seconds()
                 try:
-                    connected_clients: list[Pyre] = self.db.child('/connections').order_by_value().start_at(
-                        cur_time_sec - 5).get().pyres
-                except HTTPError as e:
-                    raise Exception(
-                        'Ensure {"rules": {"connections": {".indexOn": ".value"}}} in Realtime Database rules section\n' +
-                        repr(e)) if ".indexOn" in repr(e) else e
-                except ConnectionError:
-                    sleep(5)
-                else:
-                    for client_id, _timestamp in [pyre.item for pyre in connected_clients]:
-                        if client_id != self.client_id:
-                            self.others_online = True
-                            break
-                    else:
-                        self.others_online = False
-                    # self.live_data.set_data(f'/connections/{self.client_id}', cur_time_sec)
-                    self.db.child('connections').child(self.client_id).set(cur_time_sec)
+                    cur_time_sec = self._accurate_seconds()
+                    self.connections_ref.update({self.client_id: cur_time_sec})
                     sleep(1)
+                except HTTPError as e:
+                    raise RealtimeDbIndexDisabledError(e) if ".indexOn" in repr(e) else e
+                except network_errors():
+                    sleep(5)
         except Exception as e:
             logger.critical("Error while updating status " + exception_traceback(e))
             raise e
 
-    # def _broadcast_listener(self, _sender: FirebaseData, value: RealtimeData, **_path) -> None:
-    def _broadcast_listener(self, message) -> None:
-        print(message)
-        value = message["data"]
-        logger.debug("Got signal")
-        logger.debug(value["client_id"])
-        if value["client_id"] == self.client_id:
+    def check_others_online(self) -> bool:
+        from requests import HTTPError  # Takes ~0.1s
+        others_online = False
+        try:
+            connected_clients, etag = self.connections_ref.get(True)
+            if not connected_clients:
+                return False
+            offline_clients = []
+            cur_time_sec = self._accurate_seconds()
+            for client_id, timestamp in connected_clients.items():
+                if timestamp > cur_time_sec - 5:
+                    if client_id != self.client_id:
+                        others_online = True
+                else:
+                    offline_clients.append(client_id)
+            if offline_clients:
+                for client_id in offline_clients:
+                    connected_clients.pop(client_id)
+                self.connections_ref.set_if_unchanged(etag, connected_clients)
+        except HTTPError as e:
+            raise RealtimeDbIndexDisabledError(e) if ".indexOn" in repr(e) else e
+        except network_errors():
+            pass
+        return others_online
+
+
+    def broadcast_listener(self, event: FirebaseEvent) -> None:
+        current_thread().name = "BroadcastListener"
+        value: RealtimeSync = event.data
+        if not value or (value["client_id"] == self.client_id) or (value["timestamp"] < self._accurate_seconds() - 5):
             return
-        logger.debug(f"Listener got a signal {id(value)} {list(value.keys())}")
-        conflicts: RealtimeData = {}
+        logger.debug(f"Listener got a signal {value}")
+        broadcast_conflicts: RealtimeSync = {}
+        children_changed = content_changed = False
         with Database() as cursors:
             if CHILDREN_KEY in value:
-                children_conflicts = process_children_broadcast(value[CHILDREN_KEY], cursors)
+                children_changed, children_conflicts = process_children_broadcast(tuplify_values(value[CHILDREN_KEY]),
+                                                                                  cursors)
+                if children_conflicts:
+                    broadcast_conflicts[CHILDREN_KEY] = children_conflicts
             if CONTENT_KEY in value:
-                content_conflicts = process_content_broadcast(value[CONTENT_KEY], cursors)
-        if children_conflicts:
-            conflicts[CHILDREN_KEY] = children_conflicts
-        if content_conflicts:
-            conflicts[CONTENT_KEY] = content_conflicts
-        if conflicts:
-            self.client_broadcast(conflicts)
-        logger.debug("Before call")
-        StartLoggedThread(lambda: self.nvim.async_call(self.nvim.command, "normal vyvp"), "Trigger call")
-        logger.debug("After call")
-
-    def client_broadcast(self, data: RealtimeData):
-        if (data.get(CHILDREN_KEY) or data.get(CONTENT_KEY)) and self.initialization_event.wait(5):
-            logger.debug(data)
-            data["client_id"] = self.client_id
-            # self.live_data.set_data('/data', data)
-            self.db.child('data').set(data)
-
-    # def _new_client_listener(self, _sender: FirebaseData, value: dict[str, int], **_path) -> None:
-    def _new_client_listener(self, message) -> None:
-        value = message['data']
-        logger.debug("Client listener", str(value))
-        if value:
-            new_client_id, _ = value.popitem()
-            if self.client_id != new_client_id:
-                self.others_online = True
+                content_changed, content_conflicts = process_content_broadcast(tuplify_values(value[CONTENT_KEY]),
+                                                                               cursors)
+                if content_conflicts:
+                    broadcast_conflicts[CONTENT_KEY] = content_conflicts
+        if broadcast_conflicts:
+            self.client_broadcast(broadcast_conflicts)
+        if children_changed or content_changed:
+            self.unsynced_changes_event.set()
 
 
 if __name__ == "__main__":

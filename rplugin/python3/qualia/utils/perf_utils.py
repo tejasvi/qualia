@@ -1,4 +1,4 @@
-from time import perf_counter, time
+from time import perf_counter
 
 
 def perf_imports() -> None:
@@ -17,6 +17,4 @@ def perf_imports() -> None:
     builtins.__import__ = custom_import
 
 
-# perf_imports()
-
-start_time = time()
+perf_imports()

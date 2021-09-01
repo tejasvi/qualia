@@ -2,15 +2,15 @@ from collections import defaultdict
 from os.path import basename
 from pathlib import Path
 from time import sleep
-from typing import Optional, Any, cast
+from typing import Optional, cast
 
 from lmdb import Cursor
-from pynvim import Nvim
+from pynvim import Nvim, NvimError
 from pynvim.api import Buffer
 
 from qualia.config import NVIM_DEBUG_PIPE, _FZF_LINE_DELIMITER
 from qualia.config import _FILE_FOLDER, _ROOT_ID_KEY
-from qualia.models import NodeId, DuplicateNodeException, UncertainNodeChildrenException, View, BufferId, LastSeen, \
+from qualia.models import NodeId, DuplicateNodeException, UncertainNodeChildrenException, View, BufferId, LastSync, \
     Cursors, LineInfo
 from qualia.utils.common_utils import get_key_val, file_name_to_node_id, node_id_to_hex, logger, get_node_descendants, \
     exception_traceback
@@ -25,22 +25,24 @@ class PluginUtils:
 
         self.changedtick: dict[BufferId, int] = defaultdict(lambda: -1)
         self.undo_seq: dict[BufferId, int] = {}
-        self.buffer_last_seen: dict[BufferId, LastSeen] = defaultdict(LastSeen)
+        self.buffer_last_sync: dict[BufferId, LastSync] = defaultdict(LastSync)
         self.last_git_sync = 0.
         self.enabled: bool = True
 
-    def print_message(self, *args: Any):
+    def print_message(self, *args: object):
         text = ' - '.join([str(text) for text in args])
-        if self.ide_debugging:
-            logger.debug(text)
-        else:
-            self.nvim.out_write(text + '\n')
+        logger.debug(text)
+        self.nvim.out_write(text + '\n')
 
     def replace_with_file(self, filepath: str, replace_buffer: bool) -> None:
         command = f"silent! edit! {filepath} | normal lh"  # wiggle closes FZF popup
         if replace_buffer:
             command = "bdelete | " + command
-        self.nvim.command(command)
+        try:
+            self.nvim.command(command)
+        except NvimError as e:
+            if "ATTENTION" not in str(e):
+                raise e
 
     def navigate_node(self, node_id: NodeId, replace_buffer: bool) -> None:
         transposed = self.buffer_transposed(self.nvim.current.buffer.name)
@@ -90,14 +92,15 @@ class PluginUtils:
     def highlight_line(self, buffer_number: int, line_num: int) -> None:
         self.nvim.funcs.nvim_buf_add_highlight(buffer_number, self.highlight_ns, "ErrorMsg", line_num, 0, -1)
 
-    def handle_uncertain_node_descendant(self, buffer: Buffer, exp: UncertainNodeChildrenException, last_seen: LastSeen):
+    def handle_uncertain_node_descendant(self, buffer: Buffer, exp: UncertainNodeChildrenException,
+                                         last_sync: LastSync):
         self.nvim.command("set nowrite")
         start_line_num, end_line_num = exp.line_range
         for line_num in range(start_line_num, min(end_line_num, start_line_num + 50)):
             self.highlight_line(buffer.number, line_num)
         choice = self.nvim.funcs.confirm("Uncertain state", "&Pause parsing\n&Continue", 1)
         if choice == 2:
-            last_seen.pop_data(exp.node_id)
+            last_sync.pop_data(exp.node_id)
             return True
         else:
             self.enabled = False
@@ -109,7 +112,7 @@ class PluginUtils:
     def line_info(self, line_num) -> LineInfo:
         buffer_id = self.current_buffer_id()
         assert buffer_id is not None
-        line_data = self.buffer_last_seen[buffer_id].line_info
+        line_data = self.buffer_last_sync[buffer_id].line_info
         if line_data is not None:
             for line_number in range(line_num, -1, -1):
                 if line_number in line_data:
@@ -145,29 +148,40 @@ class PluginUtils:
         return main_id, transposed
 
     def should_continue(self, force: bool) -> bool:
+        cur_mode = self.nvim.funcs.mode()
         if not force and self.ide_debugging:
             sleep(0.1)
-            if self.nvim.funcs.mode().startswith("i"):
+            if cur_mode.startswith("i"):
                 return False
 
         if not self.enabled or (
-                not force and self.nvim.funcs.mode().startswith("i")) or not self.nvim.current.buffer.name.endswith(
+                not force and cur_mode.startswith("i")) or not self.nvim.current.buffer.name.endswith(
             ".q.md"):
             return False
 
         undotree = self.nvim.funcs.undotree()
 
-        if (self.ide_debugging and undotree["synced"] == 0) or (undotree["seq_cur"] < undotree["seq_last"]):
+        cur_undo_seq = undotree["seq_cur"]
+
+        if (self.ide_debugging and undotree["synced"] == 0) or (cur_undo_seq < undotree["seq_last"]):
             return False
 
         buffer_id = self.current_buffer_id()
         if buffer_id is None:
             return False
-        if buffer_id in self.undo_seq and undotree["seq_cur"] - self.undo_seq[buffer_id] > 1:
-            self.buffer_last_seen.pop(buffer_id)
-        self.undo_seq[buffer_id] = undotree["seq_cur"]
+        if buffer_id in self.undo_seq:
+            last_processed_undo_seq = self.undo_seq[buffer_id]
+            if cur_undo_seq < last_processed_undo_seq or (cur_undo_seq == last_processed_undo_seq and not force):
+                return False
+            else:
+                for undo_entry in reversed(undotree['entries']):
+                    if cur_undo_seq in undo_entry:
+                        if 'alt' in undo_entry:
+                            self.buffer_last_sync.pop(buffer_id)
+                        break
+        self.undo_seq[buffer_id] = cur_undo_seq
 
-        # Undo changes changedtick so check that before to pop last_seen
+        # Undo changes changedtick so check that before to pop last_sync
         try:
             changedtick = self.nvim.eval("b:changedtick")
         except OSError as e:
@@ -196,10 +210,10 @@ def get_orphan_node_ids(cursors: Cursors) -> list[NodeId]:
     node_stack = [root_id]
     while node_stack:
         node_id = node_stack.pop()
-        node_children_ids = get_node_descendants(cursors, node_id, False)
+        node_children_ids = get_node_descendants(cursors, node_id, False, False)
         if node_children_ids:
             node_stack.extend((child_id for child_id in node_children_ids if child_id not in visited_node_ids))
             visited_node_ids.update(node_children_ids)
-    orphan_node_ids = [node_id_bytes.decode() for node_id_bytes in cursors.children.iternext(values=False) if
+    orphan_node_ids = [node_id_bytes.decode() for node_id_bytes in cursors.content.iternext(values=False) if
                        node_id_bytes.decode() not in visited_node_ids]
     return orphan_node_ids

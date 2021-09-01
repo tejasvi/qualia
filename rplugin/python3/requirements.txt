@@ -1,4 +1,6 @@
-pynvim
+git+https://github.com/neovim/pynvim
+# pynvim
+
 
 markdown-it-py[plugins]
 lmdb
@@ -9,8 +11,11 @@ bloomfilter-py
 
 typing-extensions
 
-git+https://github.com/tejasvi/Pyrebase.git
-FirebaseData
 firebase-admin
+urllib3
+pid
 ntplib
 requests
+
+# Dev
+typeguard

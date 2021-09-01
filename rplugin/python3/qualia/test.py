@@ -1,4 +1,3 @@
-from json import dumps
 from os import environ
 
 import firebase_admin
@@ -19,11 +18,12 @@ FIREBASE_WEB_APP_CONFIG = {
     "measurementId": "G-BPNP22GS5X"
 }
 
-environ["GOOGLE_APPLICATION_CREDENTIALS"]=r"C:\Users\Tejasvi\IdeaProjects\qualia\rplugin\python3\firebase-adminsdk.json"
+environ[
+    "GOOGLE_APPLICATION_CREDENTIALS"] = r"C:\Users\Tejasvi\IdeaProjects\qualia\rplugin\python3\firebase-adminsdk.json"
 # environ["FIREBASE_CONFIG"] = dumps(FIREBASE_WEB_APP_CONFIG)
 default_app = firebase_admin.initialize_app(options=FIREBASE_WEB_APP_CONFIG)
-ref = db.reference('/data',default_app)
-ref.get_if_changed()
+ref = db.reference('/data', default_app)
+res = ref.get()
 
 
 def f(event: Event):

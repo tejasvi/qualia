@@ -3,9 +3,7 @@ if exists("g:loaded_qualia")
 endif
 let g:loaded_qualia = 1
 
-function! qualia#trigger_sync() abort
-    TriggerSync
-endfunction
+"autocmd TextChanged,FocusGained,BufEnter,InsertLeave,BufLeave,BufFilePost,BufAdd,CursorHold *.q.md TriggerSync
 
 function! qualia#install()
     if !has("nvim")
@@ -17,28 +15,26 @@ function! qualia#install()
 endfunction
 command! -nargs=0 QualiaInstall call qualia#install()
 
+function! qualia#user_input(prompt)
+    call inputsave()
+    let l:input = input(a:prompt)
+    call inputrestore()
+    return l:input
+endfunction
+
+function! qualia#search_input_query()
+    execute ':SearchQualia '.qualia#user_input("Search: ")
+endfunction
+
+
 if !(exists('g:qualia_no_keymap') && g:qualia_no_keymap)
     if !exists('g:qualia_prefix_key')
         let g:qualia_prefix_key='<Leader>'
     endif
 
-    function! qualia#user_input(prompt)
-        call inputsave()
-        let l:input = input(a:prompt)
-        call inputrestore()
-        return l:input
-    endfunction
-
-    function! qualia#search_input_query()
-        let l:user_input = qualia#user_input("Search: ")
-        if l:user_input !=# ""
-            execute ':SearchQualia '.l:user_input
-        endif
-    endfunction
-
     function! qualia#set_key_map()
         if !exists('b:qualia_key_map')
-            let maplist = ['a :ToggleFold', 'G :NavigateNode', 'g :HoistNode', 't :TransposeNode', 'T :TransposeNode 1', 'p :ToggleParser', '? :SearchQualia', '/ :call qualia#search_input_query()']
+            let maplist = ['j :ToggleFold', 'K :NavigateNode', 'k :HoistNode', 'l :TransposeNode', 'L :TransposeNode 1', 'p :ToggleParser', '/ :call qualia#search_input_query()']
             for i in range(1, 9)
                 call add(maplist, i.' :FoldLevel '.i)
             endfor
@@ -66,4 +62,4 @@ function! qualia#pretty_id()
         let w:matchAdded=1
     endif
 endfunction
-autocmd VimEnter,WinEnter *.q.md call qualia#pretty_id()
+autocmd VimEnter,BufEnter *.q.md call qualia#pretty_id()

@@ -14,7 +14,7 @@ def create_directory_if_absent(directory_path: Path):
 
 
 def force_remove_directory(app_folder_path: PathLike) -> None:
-    def onerror(func: Callable[[PathLike], None], path: PathLike, exc_info) -> None:
+    def onerror(func: Callable[[str], None], path: str, exc_info) -> None:
         if exc_info[0] is FileNotFoundError:
             pass
         else:

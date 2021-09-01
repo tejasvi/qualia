@@ -1,6 +1,8 @@
+import os
+from os import environ
 from pathlib import Path
 
-from appdirs import user_data_dir, user_config_dir
+from appdirs import user_data_dir
 
 from qualia.utils.config_utils import create_directory_if_absent, force_remove_directory
 
@@ -20,7 +22,7 @@ FIREBASE_WEB_APP_CONFIG = {
 
 _GIT_TOKEN = 'ghp_QJSHBmXvDAbjiiI' 'BHTDEb3yryLofv52dcTbP'
 _GIT_REPOSITORY = "github.com/tejasvi8874/test"
-GIT_TOKEN_URL = f"https://{_GIT_TOKEN}@{_GIT_REPOSITORY}"
+GIT_TOKEN_URL = f"https://{_GIT_TOKEN}{'@' if _GIT_TOKEN else ''}{_GIT_REPOSITORY}"
 GIT_SEARCH_URL = f"https://{_GIT_REPOSITORY}/search?q="
 GIT_BRANCH = "master"
 
@@ -36,7 +38,7 @@ if DEBUG:
 # Internal constants
 
 _APP_FOLDER_PATH = Path(QUALIA_DATA_DIR)
-_RESET_APP_FOLDER = False
+_RESET_APP_FOLDER = True
 if _RESET_APP_FOLDER:
     force_remove_directory(_APP_FOLDER_PATH)
 
@@ -48,12 +50,11 @@ _LOG_FILENAME = _APP_FOLDER_PATH.joinpath('logs')
 for path in (_APP_FOLDER_PATH, _FILE_FOLDER, _GIT_FOLDER, _DB_FOLDER):
     create_directory_if_absent(path)
 
-_SHORT_BUFFER_ID = True
+_SHORT_BUFFER_ID = False
 
 _EXPANDED_BULLET = '-'
 _TO_EXPAND_BULLET = '*'
 _COLLAPSED_BULLET = '+'
-_CONTENT_CHILDREN_SEPARATOR_LINES = ["<hr>", ""]
 _FZF_LINE_DELIMITER = "\t"
 
 _ROOT_ID_KEY = "root_id"
@@ -61,3 +62,9 @@ _CLIENT_KEY = "client"
 
 _GIT_FLAG_ARG = "git"
 _LOGGER_NAME = "qualia"
+
+environ[
+    "GOOGLE_APPLICATION_CREDENTIALS"] = r"C:\Users\Tejasvi\IdeaProjects\qualia\rplugin\python3\firebase-adminsdk.json" if os.name == "nt" else "/t/IdeaProjects/qualia/rplugin/python3/firebase-adminsdk.json"
+_BACKUP_COUNT = 10
+_BACKUP_DAYS_INTERVAL = 1
+_SORT_SIBLINGS = False

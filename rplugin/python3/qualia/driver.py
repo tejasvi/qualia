@@ -13,25 +13,23 @@ from qualia.models import View, DuplicateNodeException, UncertainNodeChildrenExc
 from qualia.render import render
 from qualia.services.git import sync_with_git
 from qualia.services.realtime import Realtime
+from qualia.services.utils.common_utils import get_trigger_event
 from qualia.sync import sync_buffer
-from qualia.utils.common_utils import Database, StartLoggedThread
+from qualia.utils.common_utils import Database, logger
 from qualia.utils.plugin_utils import PluginUtils
 
 
 class PluginDriver(PluginUtils):
     def __init__(self, nvim: Nvim, ide_debugging: bool):
         super().__init__(nvim, ide_debugging)
-        self.realtime_session = Realtime(nvim)
+        self.realtime_session = Realtime(lambda: nvim.async_call(nvim.command, 'normal VyVp', async_=True))
         self.sync_render_lock = Lock()
-
-    def beginner(self) -> None:
-        self.nvim.out_write("Begin\n")
-        self.main(None, None, True)
-        self.nvim.out_write("Begin end\n")
+        self.git_sync_event = get_trigger_event(lambda: sync_with_git(nvim), 0)  # 15)
 
     def main(self, view: Optional[View], fold_level: Optional[int]) -> None:
+        logger.critical("Main")
+        t0 = time()
         with self.sync_render_lock:
-            t0 = time()
             current_buffer: Buffer = self.nvim.current.buffer
 
             with Database() as cursors:
@@ -42,7 +40,7 @@ class PluginDriver(PluginUtils):
                 if buffer_id is None:
                     return
 
-                last_seen = self.buffer_last_seen[buffer_id]
+                last_sync = self.buffer_last_sync[buffer_id]
 
                 t1 = time()
                 del1 = t1 - t0
@@ -52,8 +50,8 @@ class PluginDriver(PluginUtils):
                         while True:
                             try:
                                 buffer_lines = list(current_buffer)
-                                root_view = view or sync_buffer(buffer_lines, main_id, last_seen, cursors, transposed,
-                                                                self.realtime_session)
+                                root_view = view or sync_buffer(buffer_lines, main_id, last_sync, cursors, transposed,
+                                                                self.realtime_session, self.git_sync_event)
                                 break
                             except RecursionError:
                                 if self.nvim.funcs.confirm("Too many nodes may lead to crash on slow hardware.",
@@ -64,39 +62,35 @@ class PluginDriver(PluginUtils):
                     except DuplicateNodeException as exp:
                         self.handle_duplicate_node(current_buffer, exp)
                     except UncertainNodeChildrenException as exp:
-                        if self.handle_uncertain_node_descendant(current_buffer, exp, last_seen):
+                        if self.handle_uncertain_node_descendant(current_buffer, exp, last_sync):
                             continue
                     else:
                         t2 = time()
                         del2 = t2 - t1
                         self.delete_highlights(current_buffer.number)
-                        self.buffer_last_seen[buffer_id] = render(root_view, current_buffer, self.nvim, cursors,
+                        self.buffer_last_sync[buffer_id] = render(root_view, current_buffer, self.nvim, cursors,
                                                                   transposed, fold_level)
-                    break
 
-            total = time() - t0
-            if DEBUG and total > 0.1:
-                self.print_message("Took: ", ' '.join([str(round(n, 3)) for n in (total, del1, del2, time() - t2)]))
+                        total = time() - t0
+                        if DEBUG:  # and total > 0.1:
+                            self.print_message("Took: ",
+                                               ' '.join([str(round(n, 3)) for n in (total, del1, del2, time() - t2)]))
+                    break
 
             self.nvim.command("silent set write | silent update")
             self.changedtick[buffer_id] = self.nvim.eval("b:changedtick")
-
-            if time() - self.last_git_sync > 15:
-                StartLoggedThread(target=sync_with_git, name="SyncGit")
-                self.last_git_sync = time()
-            self.print_message(time())
 
 
 r"""
 Why content hash check with db is faulty?
     User changes a node in buffer. Before the buffer contents are synced,
-        User uses a different instance, changes the node content equal to last_seen node content in previous instance.
+        User uses a different instance, changes the node content equal to last_sync node content in previous instance.
         When previous instance is synced, nothing amiss is found and latest user changes are overwritten due to latest db write policy
-        To fix, last_seen state has last seen version number of db and if during sync db gives larger number, the db content is newer and conflicts are handled accordingly (if the buffer has newer content as well).
+        To fix, last_sync state has last seen version number of db and if during sync db gives larger number, the db content is newer and conflicts are handled accordingly (if the buffer has newer content as well).
 
 https://github.com/jacobsimpson/nvim-example-python-plugin
 
-LastSeen is needed to store the last render state since the DB can change between the renders and then next sync with overwrite the external changes instead of detecting conflicts using last_seen da
+LastSync is needed to store the last render state since the DB can change between the renders and then next sync with overwrite the external changes instead of detecting conflicts using last_sync da
 
 From directory containing vimrc with: let &runtimepath.=','.escape(expand('<sfile>:p:h'), '\,')
 nvim -u vimrc and then UpdateRemotePlugins (every time commands change)

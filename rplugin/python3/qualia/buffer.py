@@ -7,7 +7,7 @@ from lmdb import Cursor
 from markdown_it.tree import SyntaxTreeNode
 from orderedset import OrderedSet
 
-from qualia.models import NodeId, View, ProcessState, NODE_ID_ATTR, Tree, LastSeen, Cursors, AstMap
+from qualia.models import NodeId, View, ProcessState, NODE_ID_ATTR, Tree, LastSync, Cursors, AstMap
 from qualia.utils.buffer_utils import get_md_ast, get_id_line, raise_if_duplicate_sibling, get_ast_sub_lists, \
     preserve_expand_consider_sub_tree
 from qualia.utils.common_utils import removeprefix, conflict
@@ -22,7 +22,7 @@ class Process:
     def __init__(self) -> None:
         pass
 
-    def process_lines(self, lines: list[str], main_id: NodeId, last_seen: LastSeen, cursors: Cursors) -> tuple[
+    def process_lines(self, lines: list[str], main_id: NodeId, last_sync: LastSync, cursors: Cursors) -> tuple[
         View, ProcessState]:
         if not lines:
             lines = ['']
@@ -35,14 +35,14 @@ class Process:
         buffer_tree: Tree = {}  # {node_id: {descendant_1: {..}, descendant_2: {..}, ..}}
 
         buffer_ast = get_md_ast(self._lines)
-        self._process_list_item_ast(buffer_ast, buffer_tree, iter([]), last_seen)
+        self._process_list_item_ast(buffer_ast, buffer_tree, iter([]), last_sync)
 
         data = buffer_tree.popitem()
         root_view = View(*data)
         return root_view, self._changes
 
     def _process_list_item_ast(self, list_item_ast: SyntaxTreeNode, tree: Tree,
-                               ordered_descendant_asts: Iterator[SyntaxTreeNode], last_seen: LastSeen):
+                               ordered_descendant_asts: Iterator[SyntaxTreeNode], last_sync: LastSync):
         is_buffer_ast = list_item_ast.type == 'root'
         assert list_item_ast.map
         content_start_line_num = list_item_ast.map[0]
@@ -53,10 +53,10 @@ class Process:
         list_item_ast.meta[NODE_ID_ATTR] = node_id
 
         sub_lists = get_ast_sub_lists(list_item_ast)
-        sub_list_tree = self._process_list_item_asts(sub_lists, last_seen)
+        sub_list_tree = self._process_list_item_asts(sub_lists, last_sync)
         try:
             first_ordered_descendant_ast = next(ordered_descendant_asts)
-            self._process_list_item_ast(first_ordered_descendant_ast, sub_list_tree, ordered_descendant_asts, last_seen)
+            self._process_list_item_ast(first_ordered_descendant_ast, sub_list_tree, ordered_descendant_asts, last_sync)
         except StopIteration:
             pass
 
@@ -65,7 +65,7 @@ class Process:
         raise_if_duplicate_sibling(list_item_ast, node_id, tree)
 
         expand, consider_sub_list_tree = (True, True) if is_buffer_ast else preserve_expand_consider_sub_tree(
-            list_item_ast, node_id, sub_list_tree, last_seen)
+            list_item_ast, node_id, sub_list_tree, last_sync)
         tree[node_id] = sub_list_tree if expand else None
 
         content_lines = [id_line] + [
@@ -74,9 +74,9 @@ class Process:
         ]
 
         self._process_node(node_id, content_lines, OrderedSet(sub_list_tree) if consider_sub_list_tree else None,
-                           last_seen)
+                           last_sync)
 
-    def _process_list_item_asts(self, list_item_asts: list[SyntaxTreeNode], last_seen: LastSeen) -> Tree:
+    def _process_list_item_asts(self, list_item_asts: list[SyntaxTreeNode], last_sync: LastSync) -> Tree:
         sub_list_tree: Tree = {}
         if not list_item_asts:
             return sub_list_tree
@@ -92,21 +92,21 @@ class Process:
             ordered_list = list_item_ast.type == 'ordered_list'
 
             for descendant_list_item_ast, item_end_line in zip_longest(descendant_asts,
-                                                                  (ast.map[0] for ast in later_descendant_asts),
-                                                                  fillvalue=list_end_line):
+                                                                       (ast.map[0] for ast in later_descendant_asts),
+                                                                       fillvalue=list_end_line):
                 token_obj = descendant_list_item_ast.token or descendant_list_item_ast.nester_tokens.opening
                 token_obj.map = descendant_list_item_ast.map[0], item_end_line
 
                 if not ordered_list:
-                    self._process_list_item_ast(descendant_list_item_ast, sub_list_tree, iter([]), last_seen)
+                    self._process_list_item_ast(descendant_list_item_ast, sub_list_tree, iter([]), last_sync)
 
             if ordered_list:
-                self._process_list_item_ast(descendant_asts[0], sub_list_tree, iter(later_descendant_asts), last_seen)
+                self._process_list_item_ast(descendant_asts[0], sub_list_tree, iter(later_descendant_asts), last_sync)
         return sub_list_tree
 
     def _process_node(self, node_id: NodeId, content_lines: list[str], descendant_ids: Union[None, OrderedSet],
-                      last_seen: LastSeen):
-        if node_id not in last_seen:
+                      last_sync: LastSync):
+        if node_id not in last_sync:
             self._changes.changed_content_map[node_id] = content_lines
             if descendant_ids is not None:
                 self._changes.changed_descendants_map[node_id] = descendant_ids
@@ -117,7 +117,7 @@ class Process:
         # manually expecting the visible node to stay the same but it changes. Though the incoming
         # change is similar to the change coming from external syncing source.
 
-        content_changed = last_seen[node_id].content_lines != content_lines
+        content_changed = last_sync[node_id].content_lines != content_lines
         if content_changed:
             if node_id in self._changes.changed_content_map:
                 self._changes.changed_content_map[node_id] = conflict(content_lines,
@@ -126,7 +126,7 @@ class Process:
                 self._changes.changed_content_map[node_id] = content_lines
 
         descendant_changed = descendant_ids is not None and (
-            descendant_ids.symmetric_difference(last_seen[node_id].descendants_ids))
+            descendant_ids.symmetric_difference(last_sync[node_id].descendants_ids))
         if descendant_changed:
             if node_id in self._changes.changed_descendants_map:
                 self._changes.changed_descendants_map[node_id].update(descendant_ids)
