@@ -3,30 +3,25 @@ from json import loads, JSONDecodeError, dumps
 from socket import gaierror
 from threading import Event, current_thread
 from time import time, sleep
-from typing import Iterable, Optional, TYPE_CHECKING, cast, Literal, Type
+from typing import Iterable, Optional, TYPE_CHECKING, cast, Literal
 
 from lmdb import Cursor
 from ntplib import NTPClient, NTPException
 from orderedset import OrderedSet
 
-from qualia.config import DEBUG
 from qualia.models import RealtimeSync, NodeId, Cursors, RealtimeSyncData, RealtimeSyncChildren, \
     RealtimeSyncContent, RealtimeData, RealtimeContent, RealtimeChildren, Stringified
 from qualia.utils.common_utils import conflict, set_node_content_lines, logger, \
     realtime_data_hash, set_ancestor_descendants, StartLoggedThread, get_node_descendants, get_node_content, Database, \
     get_set_client, exception_traceback
 
-if TYPE_CHECKING or DEBUG:
+if TYPE_CHECKING:
     from firebase_admin.db import Reference, Event as FirebaseEvent
     from requests import ConnectionError  # Takes ~0.1s
     from urllib3.exceptions import MaxRetryError
 else:
     # Dummy type class
     class Reference:
-        pass
-
-
-    class FirebaseEvent:
         pass
 
 
@@ -130,7 +125,8 @@ class RealtimeUtils(metaclass=ABCMeta):
             except network_errors():
                 logger.debug("Couldn't broadcast due to network error.")
 
-    def new_client_listener(self, event: FirebaseEvent) -> None:
+    def new_client_listener(self, event):
+        # type:(RealtimeUtils, FirebaseEvent) -> None
         current_thread().name = "ClientListener"
         value = event.data
         if value:
@@ -162,7 +158,7 @@ class RealtimeUtils(metaclass=ABCMeta):
         pass
 
 
-def network_errors() -> tuple[Type[ConnectionError], Type[gaierror], Type[MaxRetryError], Type[NTPException]]:
+def network_errors() -> object:
     from requests import ConnectionError
     from urllib3.exceptions import MaxRetryError
     return ConnectionError, gaierror, MaxRetryError, NTPException

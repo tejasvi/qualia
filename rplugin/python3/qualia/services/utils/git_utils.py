@@ -9,7 +9,6 @@ from types import FrameType
 from typing import Iterable, TextIO, cast
 
 from orderedset import OrderedSet
-from pid import PidFile, PidFileAlreadyLockedError
 
 from qualia.config import GIT_SEARCH_URL, _GIT_FOLDER, GIT_BRANCH
 from qualia.models import NodeData, NodeId, Cursors, LastSync
@@ -123,6 +122,7 @@ class GitInit:
         signal(SIGTERM, sigterm_handler)  # Signal handler (for pid) must be set from main thread
 
     def __enter__(self) -> None:
+        from pid import PidFile, PidFileAlreadyLockedError  # 0.06s
         self.process_lock = PidFile(pidname="qualia_lock", piddir=_GIT_FOLDER.joinpath(".git"),
                                     register_term_signal_handler=False)  # Can't register handler in non-main thread
         retry_count = 10

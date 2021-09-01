@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 # import qualia.utils.perf_utils
-if True:
-    from typeguard.importhook import install_import_hook
-
-    install_import_hook('qualia')
+# if True:
+#     from typeguard.importhook import install_import_hook
+#
+#     install_import_hook('qualia')
 
 from importlib.util import find_spec
 from logging import getLogger

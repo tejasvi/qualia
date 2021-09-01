@@ -4,7 +4,7 @@ from threading import current_thread
 from time import sleep
 from typing import TYPE_CHECKING, Callable
 
-from qualia.config import FIREBASE_WEB_APP_CONFIG, DEBUG
+from qualia.config import FIREBASE_WEB_APP_CONFIG
 from qualia.models import RealtimeSync, RealtimeDbIndexDisabledError
 from qualia.services.utils.common_utils import get_trigger_event
 from qualia.services.utils.realtime_utils import process_children_broadcast, process_content_broadcast, CHILDREN_KEY, \
@@ -12,7 +12,7 @@ from qualia.services.utils.realtime_utils import process_children_broadcast, pro
 from qualia.utils.bootstrap_utils import bootstrap
 from qualia.utils.common_utils import Database, logger, exception_traceback, StartLoggedThread
 
-if TYPE_CHECKING or DEBUG:
+if TYPE_CHECKING:
     from firebase_admin.db import Event as FirebaseEvent
 
 
@@ -21,7 +21,7 @@ class Realtime(RealtimeUtils):
         super().__init__()
         logger.critical("Enter")
         # self.nvim = nvim
-        self.unsynced_changes_event = get_trigger_event(buffer_sync_trigger, 0)
+        self.unsynced_changes_event = get_trigger_event(buffer_sync_trigger, 0.1)
         StartLoggedThread(target=self.initialize, name="InitRealtime")
 
     def connect_firebase(self) -> None:
@@ -82,8 +82,8 @@ class Realtime(RealtimeUtils):
             pass
         return others_online
 
-
-    def broadcast_listener(self, event: FirebaseEvent) -> None:
+    def broadcast_listener(self, event):
+        # type:(Realtime, FirebaseEvent) -> None
         current_thread().name = "BroadcastListener"
         value: RealtimeSync = event.data
         if not value or (value["client_id"] == self.client_id) or (value["timestamp"] < self._accurate_seconds() - 5):

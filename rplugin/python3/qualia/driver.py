@@ -24,7 +24,7 @@ class PluginDriver(PluginUtils):
         super().__init__(nvim, ide_debugging)
         self.realtime_session = Realtime(lambda: nvim.async_call(nvim.command, 'normal VyVp', async_=True))
         self.sync_render_lock = Lock()
-        self.git_sync_event = get_trigger_event(lambda: sync_with_git(nvim), 0)  # 15)
+        self.git_sync_event = get_trigger_event(lambda: sync_with_git(nvim), 1)  # 15)
 
     def main(self, view: Optional[View], fold_level: Optional[int]) -> None:
         logger.critical("Main")
