@@ -1,37 +1,42 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, cast, TYPE_CHECKING
 
 from orderedset import OrderedSet
-from pynvim import Nvim
-from pynvim.api import Buffer
 
-from qualia.buffer import Process
+from qualia.buffer import ParseProcess
 from qualia.config import DEBUG, _SORT_SIBLINGS
-from qualia.models import NodeId, View, NodeData, Tree, LastSync, Cursors, LineInfo
-from qualia.utils.common_utils import logger, get_node_descendants, get_node_content
+from qualia.models import NodeId, View, NodeData, LastSync, Cursors, LineInfo, Li
+from qualia.utils.common_utils import logger, get_node_descendants, get_node_content_lines
 from qualia.utils.render_utils import render_buffer, content_lines_to_buffer_lines
 
+if TYPE_CHECKING:
+    from pynvim import Nvim
+    from pynvim.api import Buffer
 
-def render(root_view: View, buffer: Buffer, nvim: Nvim, cursors: Cursors, transposed: bool,
-           fold_level: Optional[int]) -> LastSync:
+
+def render(root_view, buffer, nvim, cursors, transposed, fold_level):
+    # type:(View, Buffer, Nvim, Cursors, bool, Optional[int]) -> LastSync
     new_last_sync, new_content_lines = get_buffer_lines_from_view(root_view, cursors, transposed, fold_level)
     old_content_lines = render_buffer(buffer, new_content_lines, nvim)
 
     if DEBUG:
         try:
-            new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.main_id,
-                                                                 new_last_sync, cursors)
+            new_root_view, new_changes = ParseProcess().process_lines(cast(Li, new_content_lines.copy()),
+                                                                      root_view.main_id,
+                                                                      new_last_sync, cursors, transposed)
             assert not new_changes, '\n'.join(
                 map(str, (old_content_lines, new_content_lines, new_changes, new_last_sync)))
             re_last_sync, re_content_lines = get_buffer_lines_from_view(new_root_view, cursors, transposed, fold_level)
             assert new_content_lines == re_content_lines, '\n'.join(new_content_lines + ['<TO>'] + re_content_lines)
         except Exception as exp:
             for _ in range(100):
-                new_root_view, new_changes = Process().process_lines(old_content_lines.copy(), root_view.main_id,
-                                                                     new_last_sync, cursors)
-                new_root_view, new_changes = Process().process_lines(new_content_lines.copy(), root_view.main_id,
-                                                                     new_last_sync, cursors)
+                new_root_view, new_changes = ParseProcess().process_lines(cast(Li, new_content_lines.copy()),
+                                                                          root_view.main_id,
+                                                                          new_last_sync, cursors, transposed)
+                new_root_view, new_changes = ParseProcess().process_lines(cast(Li, new_content_lines.copy()),
+                                                                          root_view.main_id,
+                                                                          new_last_sync, cursors, transposed)
                 re_last_sync, re_content_lines = get_buffer_lines_from_view(new_root_view, cursors, transposed,
                                                                             fold_level)
             raise exp
@@ -39,22 +44,23 @@ def render(root_view: View, buffer: Buffer, nvim: Nvim, cursors: Cursors, transp
     return new_last_sync
 
 
-def get_buffer_lines_from_view(buffer_view: View, cursors: Cursors, transposed: bool, fold_level: Optional[int]) -> \
-        tuple[
-            LastSync, list[str]]:
+def get_buffer_lines_from_view(buffer_view: View, cursors: Cursors, transposed: bool,
+                               fold_level: Optional[int]) -> tuple[LastSync, Li]:
     last_sync = LastSync()
-    buffer_lines: list[str] = []
-    stack: list[tuple[NodeId, Tree, int, int, bool]] = [(buffer_view.main_id, {
-        buffer_view.main_id: {} if buffer_view.sub_tree is None else buffer_view.sub_tree}, -1, 0, False)]
+    buffer_lines = cast(Li, [])
+    stack: list[tuple[NodeId, View, int, int, bool]] = [(buffer_view.main_id, View(cast(NodeId, ''), {
+        buffer_view.main_id: {} if buffer_view.sub_tree is None else buffer_view.sub_tree}), -1, 0, False)]
     while stack:
-        cur_node_id, context, previous_indent_level, cur_nest_level, previously_ordered = stack.pop()
+        cur_node_id, parent_view, previous_indent_level, cur_nest_level, previously_ordered = stack.pop()
 
-        content_lines = get_node_content(cursors, cur_node_id)
+        content_lines = get_node_content_lines(cursors, cur_node_id)
         descendant_ids = get_node_descendants(cursors, cur_node_id, transposed, True)
+
+        context = parent_view.sub_tree
 
         if cur_node_id not in last_sync:
             last_sync[cur_node_id] = NodeData(content_lines, OrderedSet(descendant_ids))
-        last_sync.line_info[len(buffer_lines)] = LineInfo(cur_node_id, context)
+        last_sync.line_info[len(buffer_lines)] = LineInfo(cur_node_id, context, parent_view.main_id, cur_nest_level)
 
         buffer_descendant_context = context[cur_node_id]
 
@@ -77,11 +83,14 @@ def get_buffer_lines_from_view(buffer_view: View, cursors: Cursors, transposed: 
             context[cur_node_id] = descendant_context = {
                 descendant_id: buffer_descendant_context.get(descendant_id)
                 for descendant_id in descendant_ids}
-            for descendant_node_id in sorted(descendant_ids, reverse=True) if _SORT_SIBLINGS else reversed(descendant_ids):
+            for descendant_node_id in sorted(descendant_ids, reverse=True) if _SORT_SIBLINGS else reversed(
+                    descendant_ids):
                 stack.append(
-                    (descendant_node_id, descendant_context, current_indent_level, cur_nest_level + 1, ordered,))
+                    (
+                    descendant_node_id, View(cur_node_id, descendant_context), current_indent_level, cur_nest_level + 1,
+                    ordered,))
 
         buffer_lines += content_lines_to_buffer_lines(content_lines, cur_node_id, current_indent_level, expanded,
-                                                      ordered, cursors)
+                                                      ordered, cursors, transposed)
 
-    return last_sync, buffer_lines or ['']
+    return last_sync, buffer_lines or cast(Li, [''])

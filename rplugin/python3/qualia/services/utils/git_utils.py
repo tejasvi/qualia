@@ -10,25 +10,24 @@ from typing import Iterable, TextIO, cast
 
 from orderedset import OrderedSet
 
-from qualia.config import GIT_SEARCH_URL, _GIT_FOLDER, GIT_BRANCH
-from qualia.models import NodeData, NodeId, Cursors, LastSync
-from qualia.utils.common_utils import cd_run_git_cmd, node_id_to_hex, file_name_to_node_id, get_node_descendants, \
-    get_node_content, logger, open_write_lf
+from qualia.config import GIT_SEARCH_URL, _GIT_FOLDER, GIT_BRANCH, _SORT_SIBLINGS
+from qualia.models import NodeData, NodeId, Cursors, LastSync, El, Li
+from qualia.utils.common_utils import cd_run_git_cmd, get_node_descendants, \
+    get_node_content_lines, logger, open_write_lf, decrypt_lines, encrypt_lines
 
 _BACKLINK_LINE_START = "0. [`Backlinks`]"
 _CONTENT_CHILDREN_SEPARATOR_LINES = ["<hr>", ""]
 
 
-def add_content_to_node_directory(content_lines: list[str], node_directory_path: Path):
+def add_content_to_node_directory(content_lines: Li, node_directory_path: Path):
     with open_write_lf(node_directory_path.joinpath("README.md"), True) as content_file:
         content_file.write('\n'.join(content_lines) + '\n')
 
 
 def add_children_to_node_directory(node_children_ids: Iterable[NodeId], node_directory_path: Path):
     for child_node_id in node_children_ids:
-        hex_id = node_id_to_hex(child_node_id)
-        child_path = node_directory_path.joinpath(hex_id + ".q")
-        symlink_source = f"../{hex_id}.q"
+        child_path = node_directory_path.joinpath(child_node_id + ".q")
+        symlink_source = f"../{child_node_id}.q"
         if symlinks_enabled():
             symlink(symlink_source, child_path, target_is_directory=True)
         else:
@@ -55,16 +54,16 @@ def symlinks_enabled() -> bool:
     return True
 
 
-def create_markdown_file(cursors: Cursors, node_id: NodeId) -> OrderedSet[NodeId]:
-    content_lines = cast(list[str], get_node_content(cursors, node_id))
-    content_lines.extend(_CONTENT_CHILDREN_SEPARATOR_LINES)
+def create_markdown_file(cursors: Cursors, node_id: NodeId, repository_encrypted: bool) -> OrderedSet[NodeId]:
+    content_lines = get_node_content_lines(cursors, node_id)
+    markdown_file_lines = encrypt_lines(content_lines) if repository_encrypted else content_lines
+    markdown_file_lines.extend(_CONTENT_CHILDREN_SEPARATOR_LINES)
     valid_node_children_ids = get_node_descendants(cursors, node_id, False, True)
-    content_lines.append(f"{_BACKLINK_LINE_START}({GIT_SEARCH_URL + node_id_to_hex(node_id)})")
-    for i, child_id in enumerate(valid_node_children_ids):
-        hex_id = node_id_to_hex(child_id)
-        content_lines.append(f"{i}. [`{hex_id}`]({hex_id}.md)")
-    with open_write_lf(_GIT_FOLDER.joinpath(node_id_to_hex(node_id) + ".md"), False) as f:
-        f.write('\n'.join(content_lines) + '\n')
+    markdown_file_lines.append(f"{_BACKLINK_LINE_START}({GIT_SEARCH_URL + node_id})")
+    for i, child_id in enumerate(sorted(valid_node_children_ids) if _SORT_SIBLINGS else valid_node_children_ids):
+        markdown_file_lines.append(f"{i}. [`{child_id}`]({child_id}.md)")
+    with open_write_lf(_GIT_FOLDER.joinpath(node_id + ".md"), False) as f:
+        f.write('\n'.join(markdown_file_lines) + '\n')
     return valid_node_children_ids
 
 
@@ -77,7 +76,7 @@ def pop_unsynced_nodes(cursors: Cursors):
             unsynced_children.delete()
             children_ids = get_node_descendants(cursors, node_id, False, False)
             if cursors.content.set_key(node_id.encode()):  # Check for invalid nodeId
-                content = get_node_content(cursors, node_id)
+                content = get_node_content_lines(cursors, node_id)
                 last_sync[node_id] = NodeData(content, children_ids)
             if not unsynced_children.next():
                 break
@@ -86,7 +85,7 @@ def pop_unsynced_nodes(cursors: Cursors):
         while True:
             cur_node_id: NodeId = unsynced_content.key().decode()
             unsynced_content.delete()
-            content_lines = get_node_content(cursors, cur_node_id)
+            content_lines = get_node_content_lines(cursors, cur_node_id)
             if cur_node_id not in last_sync:
                 last_sync[cur_node_id] = NodeData(content_lines, OrderedSet())
             if not unsynced_content.next():
@@ -97,12 +96,13 @@ def pop_unsynced_nodes(cursors: Cursors):
 def file_children_line_to_node_id(line: str) -> NodeId:
     uuid_match = search(r"[0-9a-f]{8}(?:-?[0-9a-f]{4}){4}[0-9a-f]{8}(?=\.md\)$)", line)
     assert uuid_match, f"Child node ID for '{line}' couldn't be parsed"
-    return file_name_to_node_id(uuid_match.group(), '')
+    return cast(NodeId, uuid_match.group())
 
 
-def get_file_content_children(file: TextIO) -> tuple[list[str], OrderedSet]:
+def repository_file_to_content_children(file: TextIO, encrypted: bool) -> tuple[Li, OrderedSet]:
     lines = file.read().splitlines()
     children_ids = []
+
     while lines:
         line = lines.pop()
         if line.startswith(_BACKLINK_LINE_START):
@@ -110,6 +110,8 @@ def get_file_content_children(file: TextIO) -> tuple[list[str], OrderedSet]:
             assert lines.pop() == _CONTENT_CHILDREN_SEPARATOR_LINES[0]
             break
         children_ids.append(file_children_line_to_node_id(line))
+
+    lines = decrypt_lines(cast(El, lines)) if encrypted else cast(Li, lines)
     return lines, OrderedSet(reversed(children_ids))
 
 

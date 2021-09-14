@@ -5,8 +5,7 @@ from os import environ, name, pathsep
 from pathlib import Path
 from subprocess import run
 from sys import executable
-
-from qualia.config import _LOG_FILENAME
+from typing import Optional
 
 
 def get_location(exe_name: str) -> str:
@@ -17,19 +16,20 @@ class ProcessException(Exception):
     pass
 
 
-def cmd(*args, **kwargs) -> None:
-    res = run(*args, **kwargs, capture_output=True)
-    if res.returncode:
-        raise ProcessException(res.returncode, (str(args) + str(kwargs))[20:], res.stdout, res.stderr)
+def install_dependencies(optional_install_dir: str, logger: Optional[logging.Logger]) -> None:
+    def cmd(*args, **kwargs) -> None:
+        res = run(*args, **kwargs, capture_output=True)
+        if res.returncode:
+            raise ProcessException(res.returncode, (str(args) + str(kwargs))[20:], res.stdout, res.stderr)
+        if logger:
+            logger.critical(f"Running {args} and {kwargs}\n{res.stdout}\n{res.stderr}")
 
-
-def install_dependencies(optional_install_dir: str) -> None:
     try:
         cmd([executable, "-m", "ensurepip", "--default-pip"])
     except ProcessException:
         pass
 
-    requirements_file_path = Path(__file__).parent.parent.parent.joinpath("requirements.txt").as_posix()
+    requirements_file_path = Path(__file__).parent.parent.joinpath("requirements.txt").as_posix()
 
     init_command = [executable, "-m", "pip", "install", "setuptools", "wheel"]
     install_command = [executable, "-m", "pip", "install", "-r", requirements_file_path]
@@ -59,11 +59,12 @@ def install_dependencies(optional_install_dir: str) -> None:
 
 
 def setup_logger(logger: logging.Logger) -> None:
+    from qualia.config import _LOG_FILENAME
     logger.setLevel(logging.DEBUG if logging.DEBUG else logging.INFO)
     file_handler = RotatingFileHandler(filename=_LOG_FILENAME, mode='w', maxBytes=512000, backupCount=4)
     formatter = logging.Formatter(fmt='%(asctime)s %(levelname)-8s [%(threadName)-12.12s] %(message)s',
                                   datefmt='%Y-%m-%d %H:%M:%S')
     file_handler.setFormatter(formatter)
-    for handler in (file_handler, logging.StreamHandler()):
-        logger.addHandler(handler)
+    logger.addHandler(file_handler)
     logger.critical("== STARTING on " + datetime.today().isoformat() + " ==")
+    logger.addHandler(logging.StreamHandler())

@@ -9,18 +9,22 @@ from lmdb import Cursor
 from orderedset import OrderedSet
 from typing_extensions import TypedDict
 
+from qualia.config import _ENCRYPTION_USED
+
 NodeId = NewType("NodeId", str)
 StringifiedChildren = NewType("StringifiedChildren", str)
 StringifiedContent = NewType("StringifiedContent", str)
-Stringified = Union[StringifiedContent, StringifiedChildren]
 BufferId = Tuple[int, str]
 BufferNodeId = NewType("BufferNodeId", str)
 Tree = Dict[NodeId, Optional[dict]]
 LineRange = Tuple[int, int]
 AstMap = Tuple[int, int]
+El = NewType("El", list[str])
+Li = NewType("Li", list[str])
+ListenerRequest = tuple[str, list, dict[str, object]]
 
 
-class Client(TypedDict):
+class DbClient(TypedDict):
     client_id: str
     client_name: str
 
@@ -33,7 +37,7 @@ class View:
 
 class ProcessState:
     def __init__(self) -> None:
-        self.changed_content_map: Dict[NodeId, List[str]] = {}
+        self.changed_content_map: Dict[NodeId, Li] = {}
         self.changed_descendants_map: Dict[NodeId, OrderedSet[NodeId]] = {}
 
     def __bool__(self) -> bool:
@@ -53,6 +57,8 @@ class UncertainNodeChildrenException(Exception):
 class LineInfo:
     node_id: NodeId
     context: Tree
+    ancester_node_id: NodeId
+    nested_level: int
 
 
 @dataclass
@@ -93,7 +99,7 @@ class LastSync(UserDict, MutableMapping[NodeId, NodeData]):
         self.data.pop(node_id)
 
 
-JSONType = Union[str, int, float, bool, None, Dict[str, object], List[object]]
+JSONType = Union[str, int, float, bool, None, Dict[str, object], List[str], List[object], Li, El]
 NODE_ID_ATTR = "node_id"
 
 
@@ -107,8 +113,8 @@ class Cursors:
     unsynced_children: Cursor
     unsynced_views: Cursor
 
-    buffer_to_node_id: Cursor
-    node_to_buffer_id: Cursor
+    buffer_id_node_id: Cursor
+    node_id_buffer_id: Cursor
 
     metadata: Cursor
 
@@ -124,21 +130,40 @@ class RealtimeDbIndexDisabledError(Exception):
             'Ensure {"rules": {"connections": {".indexOn": ".value"}}} in Realtime Database rules section\n' + str(e))
 
 
-RealtimeSyncChildren = dict[NodeId, tuple[str, List[NodeId]]]
-RealtimeSyncContent = dict[NodeId, tuple[str, List[str]]]
-RealtimeSyncData = Union[RealtimeSyncChildren, RealtimeSyncContent]
-
-RealtimeChildren = Dict[NodeId, Tuple[str, StringifiedChildren]]
-RealtimeContent = Dict[NodeId, Tuple[str, StringifiedContent]]
+RealtimeChildren = dict[NodeId, tuple[str, List[NodeId]]]
+RealtimeContent = dict[NodeId, tuple[str, Li]]
 RealtimeData = Union[RealtimeChildren, RealtimeContent]
 
+RealtimeStringifiedChildren = Dict[NodeId, Tuple[str, StringifiedChildren]]
+RealtimeStringifiedContent = Dict[NodeId, Tuple[str, StringifiedContent]]
+RealtimeStringifiedData = Union[RealtimeStringifiedChildren, RealtimeStringifiedContent]
 
-class RealtimeSync(TypedDict, total=False):
-    children: RealtimeSyncChildren
-    content: RealtimeSyncContent
+
+class RealtimeBroadcastPacket(TypedDict, total=False):
+    children: RealtimeChildren
+    content: RealtimeContent
     client_id: str
     timestamp: int
+    encryption_enabled: bool
 
 
-BufferContentSetter = Callable[[int, Union[str, list[str]]], None]
-GitChangedNodes = dict[NodeId, tuple[OrderedSet[NodeId], list[str]]]
+BufferContentSetter = Callable[[int, Union[str, Li]], None]
+GitChangedNodes = dict[NodeId, tuple[OrderedSet[NodeId], Li]]
+
+
+class KeyNotFoundError(Exception):
+    pass
+
+
+class AbstractFernet:
+    def __init__(self, _key: bytes):
+        pass
+
+    def _error(self) -> bytes:
+        raise NotImplementedError(f"Encryption or decryption requested but {_ENCRYPTION_USED=}")
+
+    def decrypt(self, _token: bytes) -> bytes:
+        return self._error()
+
+    def encrypt(self, _data: bytes) -> bytes:
+        return self._error()

@@ -1,43 +1,55 @@
 from __future__ import annotations
 
-# import qualia.utils.perf_utils
+# from qualia.utils.perf_utils import perf_imports
+#
+# perf_imports()
+
 # if True:
 #     from typeguard.importhook import install_import_hook
 #
 #     install_import_hook('qualia')
 
-from importlib.util import find_spec
-from logging import getLogger
-from pathlib import Path
-from sys import path, version_info
-from traceback import format_exception
+from sys import path, version_info, argv
 
-from qualia.config import _LOGGER_NAME, DEBUG
-from qualia.utils.init_utils import install_dependencies, setup_logger
+# Detect if loaded as plugin or from external script
+if argv[-1].endswith("qualia") or argv[-1].endswith("__init__.py"):
+    from pathlib import Path
+    from importlib.util import find_spec
+    from logging import getLogger
+    from traceback import format_exception
 
-assert version_info[:2] >= (3, 7), "Use python version equal or higher than 3.7"
+    from qualia.config import _LOGGER_NAME
+    from qualia.utils.init_utils import install_dependencies, setup_logger
 
-"http://ix.io/3xdL"
+    assert version_info[:2] >= (3, 7), "Use python version equal or higher than 3.7"
 
-_logger = getLogger(_LOGGER_NAME)
+    "http://ix.io/3xdL"
+    "https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type"
 
-setup_logger(_logger)
+    _logger = getLogger(_LOGGER_NAME)
 
-optional_install_dir = Path().home().joinpath('.qualia_packages').as_posix()
-path.append(optional_install_dir)
+    setup_logger(_logger)
 
-try:
+    optional_install_dir = Path().home().joinpath('.qualia_packages').as_posix()
+    path.append(optional_install_dir)
 
-    from qualia.plugin import Qualia
+    try:
 
-    if not find_spec('firebase_admin'):  # Lazy loaded
-        raise ModuleNotFoundError
-except ModuleNotFoundError as e:
-    _logger.critical("Certain packages are missing " + str(e) + "Attempting installation")
-    install_dependencies(optional_install_dir)
-    from qualia.plugin import Qualia
+        from qualia.plugin import Qualia
 
-    _logger.critical("Certain packages were missing and are now installed. Run :UpdateRemotePlugins again")
-except BaseException as e:
-    _logger.critical('\n'.join(format_exception(None, e, e.__traceback__)))
-    raise e
+        for package in ('firebase_admin', 'markdown_it', 'pynvim'):  # Lazy loaded
+            if not find_spec(package):
+                raise ModuleNotFoundError
+    except ModuleNotFoundError as e:
+        _logger.critical("Certain packages are missing " + str(e) + "Attempting installation")
+        install_dependencies(optional_install_dir, _logger)
+        from qualia.plugin import Qualia
+
+        _logger.critical("Certain packages were missing and are now installed. Run :UpdateRemotePlugins again")
+    except BaseException as e:
+        _logger.critical('\n'.join(format_exception(None, e, e.__traceback__)))
+        raise e
+
+"""
+https://cryptography.io/en/latest/fernet/#implementation
+"""

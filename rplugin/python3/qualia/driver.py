@@ -3,26 +3,28 @@ from __future__ import annotations
 from sys import setrecursionlimit, getrecursionlimit
 from threading import Lock
 from time import time
-from typing import Optional
-
-from pynvim import Nvim
-from pynvim.api import Buffer
+from typing import Optional, cast, TYPE_CHECKING
 
 from qualia.config import DEBUG
-from qualia.models import View, DuplicateNodeException, UncertainNodeChildrenException
+from qualia.models import View, DuplicateNodeException, UncertainNodeChildrenException, Li
 from qualia.render import render
 from qualia.services.git import sync_with_git
 from qualia.services.realtime import Realtime
-from qualia.services.utils.common_utils import get_trigger_event
+from qualia.services.utils.common_service_utils import get_trigger_event
 from qualia.sync import sync_buffer
-from qualia.utils.common_utils import Database, logger
+from qualia.utils.common_utils import Database, logger, trigger_buffer_change
 from qualia.utils.plugin_utils import PluginUtils
+
+if TYPE_CHECKING:
+    from pynvim import Nvim
+    from pynvim.api import Buffer
 
 
 class PluginDriver(PluginUtils):
-    def __init__(self, nvim: Nvim, ide_debugging: bool):
+    def __init__(self, nvim, ide_debugging):
+        # type: (Nvim, bool)->None
         super().__init__(nvim, ide_debugging)
-        self.realtime_session = Realtime(lambda: nvim.async_call(nvim.command, 'normal VyVp', async_=True))
+        self.realtime_session = Realtime(lambda: trigger_buffer_change(nvim))
         self.sync_render_lock = Lock()
         self.git_sync_event = get_trigger_event(lambda: sync_with_git(nvim), 1)  # 15)
 
@@ -33,7 +35,10 @@ class PluginDriver(PluginUtils):
             current_buffer: Buffer = self.nvim.current.buffer
 
             with Database() as cursors:
-                switched_buffer, transposed, main_id = self.process_filepath(current_buffer.name, cursors, view)
+                buffer_name = current_buffer.name
+                if buffer_name == '':
+                    return
+                switched_buffer, transposed, main_id = self.process_filepath(buffer_name, cursors, view)
                 if switched_buffer:
                     return
                 buffer_id = self.current_buffer_id()
@@ -49,7 +54,7 @@ class PluginDriver(PluginUtils):
                     try:
                         while True:
                             try:
-                                buffer_lines = list(current_buffer)
+                                buffer_lines = cast(Li, list(current_buffer))
                                 root_view = view or sync_buffer(buffer_lines, main_id, last_sync, cursors, transposed,
                                                                 self.realtime_session, self.git_sync_event)
                                 break

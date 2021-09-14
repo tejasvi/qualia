@@ -6,6 +6,7 @@ markdown-it-py[plugins]
 lmdb
 appdirs
 orderedset
+cryptography
 base65536
 bloomfilter-py
 
@@ -16,6 +17,10 @@ urllib3
 pid
 ntplib
 requests
+psutil
+
+rpyc
 
 # Dev
 typeguard
+

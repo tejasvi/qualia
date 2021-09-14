@@ -1,19 +1,22 @@
 from collections import defaultdict
 from os.path import basename
 from pathlib import Path
+from sys import executable
 from time import sleep
-from typing import Optional, cast
+from typing import Optional, cast, TYPE_CHECKING
 
 from lmdb import Cursor
 from pynvim import Nvim, NvimError
-from pynvim.api import Buffer
 
-from qualia.config import NVIM_DEBUG_PIPE, _FZF_LINE_DELIMITER
+from qualia.config import NVIM_DEBUG_PIPE, _FZF_LINE_DELIMITER, _TRANSPOSED_FILE_PREFIX
 from qualia.config import _FILE_FOLDER, _ROOT_ID_KEY
 from qualia.models import NodeId, DuplicateNodeException, UncertainNodeChildrenException, View, BufferId, LastSync, \
-    Cursors, LineInfo
-from qualia.utils.common_utils import get_key_val, file_name_to_node_id, node_id_to_hex, logger, get_node_descendants, \
-    exception_traceback
+    Cursors, LineInfo, KeyNotFoundError
+from qualia.utils.common_utils import get_key_val, file_name_to_node_id, logger, get_node_descendants, \
+    exception_traceback, get_node_content_lines, cursor_keys
+
+if TYPE_CHECKING:
+    from pynvim.api import Buffer
 
 
 class PluginUtils:
@@ -35,9 +38,9 @@ class PluginUtils:
         self.nvim.out_write(text + '\n')
 
     def replace_with_file(self, filepath: str, replace_buffer: bool) -> None:
-        command = f"silent! edit! {filepath} | normal lh"  # wiggle closes FZF popup
+        command = f"let qualia_last_buffer=bufnr('%') |  silent! edit {filepath} | normal lh"  # wiggle closes FZF popup
         if replace_buffer:
-            command = "bdelete | " + command
+            command += " | bdelete qualia_last_buffer"
         try:
             self.nvim.command(command)
         except NvimError as e:
@@ -53,7 +56,7 @@ class PluginUtils:
     def process_filepath(self, buffer_name: str, cursors: Cursors, view) -> tuple[bool, bool, NodeId]:
         switched_buffer = False
         try:
-            main_id, transposed = self.resolve_main_id(buffer_name, cursors.content)
+            main_id, transposed = self.resolve_main_id(buffer_name, cursors)
         except ValueError:
             main_id, transposed = self.navigate_root_node(buffer_name, cursors.metadata)
             switched_buffer = True
@@ -63,7 +66,7 @@ class PluginUtils:
         return switched_buffer, transposed, main_id
 
     def navigate_root_node(self, buffer_name: str, metadata_cursor: Cursor) -> tuple[NodeId, bool]:
-        transposed = self.buffer_transposed(basename(buffer_name))
+        transposed = self.buffer_transposed(buffer_name)
         root_id = cast(NodeId, get_key_val(_ROOT_ID_KEY, metadata_cursor, True))
         self.replace_with_file(self.node_id_to_filepath(root_id, transposed), True)
         # self.print_message("Redirecting to root node")
@@ -81,7 +84,8 @@ class PluginUtils:
     def current_line_number(self) -> int:
         return self.nvim.funcs.line('.') - 1
 
-    def handle_duplicate_node(self, buffer: Buffer, exp: DuplicateNodeException):
+    def handle_duplicate_node(self, buffer, exp):
+        # type: (Buffer, DuplicateNodeException)->None
         self.nvim.command("set nowrite")
         self.print_message(
             f"Duplicate siblings at lines {', '.join([str(first_line) for first_line, _ in exp.line_ranges])}")
@@ -92,8 +96,8 @@ class PluginUtils:
     def highlight_line(self, buffer_number: int, line_num: int) -> None:
         self.nvim.funcs.nvim_buf_add_highlight(buffer_number, self.highlight_ns, "ErrorMsg", line_num, 0, -1)
 
-    def handle_uncertain_node_descendant(self, buffer: Buffer, exp: UncertainNodeChildrenException,
-                                         last_sync: LastSync):
+    def handle_uncertain_node_descendant(self, buffer, exp, last_sync):
+        # type:(Buffer, UncertainNodeChildrenException, LastSync) -> bool
         self.nvim.command("set nowrite")
         start_line_num, end_line_num = exp.line_range
         for line_num in range(start_line_num, min(end_line_num, start_line_num + 50)):
@@ -117,7 +121,8 @@ class PluginUtils:
             for line_number in range(line_num, -1, -1):
                 if line_number in line_data:
                     return line_data[line_number]
-        raise Exception("Current line info not found " + str(line_data))
+        raise Exception(
+            "Current line info not found " + f"{self.buffer_last_sync=} {line_data=} {line_num=} {buffer_id=}")
 
     def line_node_view(self, line_num) -> View:
         line_info = self.line_info(line_num)
@@ -127,36 +132,36 @@ class PluginUtils:
 
     @staticmethod
     def buffer_transposed(buffer_name: str) -> bool:
-        return basename(buffer_name)[0] == "~"
+        return basename(buffer_name)[0] == _TRANSPOSED_FILE_PREFIX
 
     @staticmethod
-    def node_id_to_filepath(root_id: NodeId, transposed) -> str:
-        file_name = node_id_to_hex(root_id) + ".q.md"
+    def node_id_to_filepath(node_id: NodeId, transposed) -> str:
+        file_name = node_id + ".q.md"
         if transposed:
-            file_name = '~' + file_name
+            file_name = _TRANSPOSED_FILE_PREFIX + file_name
         return _FILE_FOLDER.joinpath(file_name).as_posix()
 
     @staticmethod
-    def resolve_main_id(buffer_name: str, content_cursor: Cursor) -> tuple[NodeId, bool]:
+    def resolve_main_id(buffer_name: str, cursors: Cursors) -> tuple[NodeId, bool]:
         file_name = basename(buffer_name)
         transposed = PluginUtils.buffer_transposed(buffer_name)
         if transposed:
             file_name = file_name[1:]
         main_id = file_name_to_node_id(file_name, '.q.md')
-        if get_key_val(main_id, content_cursor, False) is None:
+        try:
+            get_node_content_lines(cursors, main_id)
+        except KeyNotFoundError:
             raise ValueError(buffer_name)
         return main_id, transposed
 
     def should_continue(self, force: bool) -> bool:
-        cur_mode = self.nvim.funcs.mode()
+        in_normal_mode = self.nvim.funcs.mode() == 'n'
         if not force and self.ide_debugging:
             sleep(0.1)
-            if cur_mode.startswith("i"):
+            if not in_normal_mode:
                 return False
 
-        if not self.enabled or (
-                not force and cur_mode.startswith("i")) or not self.nvim.current.buffer.name.endswith(
-            ".q.md"):
+        if not (self.enabled and (force or in_normal_mode) and self.nvim.current.buffer.name.endswith(".q.md")):
             return False
 
         undotree = self.nvim.funcs.undotree()
@@ -199,8 +204,10 @@ class PluginUtils:
     def fzf_run(self, fzf_lines: list[str], query: str) -> None:
         self.nvim.call("fzf#run",
                        {'source': fzf_lines, 'sink': self.fzf_sink_command, 'window': {'width': 0.95, 'height': 0.98},
-                        'options': ['--delimiter', _FZF_LINE_DELIMITER, '--with-nth', '2..',
-                                    '--query', query]})
+                        'options': ['--delimiter', _FZF_LINE_DELIMITER, '--with-nth', '2..', '--query', query,
+                                    '--preview', executable + " " + Path(__file__).parent.parent.joinpath(
+                                'services/preview.py').as_posix() + " {1} 1",
+                                    '--preview-window', ":wrap"]})
 
 
 def get_orphan_node_ids(cursors: Cursors) -> list[NodeId]:
@@ -214,6 +221,7 @@ def get_orphan_node_ids(cursors: Cursors) -> list[NodeId]:
         if node_children_ids:
             node_stack.extend((child_id for child_id in node_children_ids if child_id not in visited_node_ids))
             visited_node_ids.update(node_children_ids)
-    orphan_node_ids = [node_id_bytes.decode() for node_id_bytes in cursors.content.iternext(values=False) if
-                       node_id_bytes.decode() not in visited_node_ids]
+    cursors.content.first()
+    orphan_node_ids = [cast(NodeId, node_id) for node_id in cursor_keys(cursors.content) if
+                       node_id not in visited_node_ids]
     return orphan_node_ids

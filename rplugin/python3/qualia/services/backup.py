@@ -5,7 +5,6 @@ from threading import Timer
 from zipfile import ZipFile, ZIP_DEFLATED
 
 from qualia.config import _DB_FOLDER, _BACKUP_COUNT, _BACKUP_DAYS_INTERVAL
-from qualia.utils.common_utils import removesuffix
 
 
 def backup_db() -> None:
@@ -29,3 +28,10 @@ def backup_db() -> None:
     with ZipFile(_DB_FOLDER.joinpath(now.isoformat().replace(":", ";") + backup_file_suffix), compresslevel=9,
                  compression=ZIP_DEFLATED, mode='x') as backup_zip:
         backup_zip.write(_DB_FOLDER.joinpath('data.mdb'))
+
+
+def removesuffix(input_string: str, suffix: str) -> str:
+    # in 3.9 str.removesuffix
+    if suffix and input_string.endswith(suffix):
+        return input_string[:-len(suffix)]
+    return input_string

@@ -34,7 +34,7 @@ if !(exists('g:qualia_no_keymap') && g:qualia_no_keymap)
 
     function! qualia#set_key_map()
         if !exists('b:qualia_key_map')
-            let maplist = ['j :ToggleFold', 'K :NavigateNode', 'k :HoistNode', 'l :TransposeNode', 'L :TransposeNode 1', 'p :ToggleParser', '/ :call qualia#search_input_query()']
+            let maplist = ['j :ToggleFold', 'K :NavigateNode', 'k :HoistNode', 'l :TransposeNode', 'L :TransposeNode 1', 'p :ToggleParser', '/ :call qualia#search_input_query()', '? :SearchQualia']
             for i in range(1, 9)
                 call add(maplist, i.' :FoldLevel '.i)
             endfor
@@ -51,15 +51,33 @@ endif
 
 function! qualia#pretty_id()
     if !exists('w:matchAdded')
-        for [pattern, cchar] in [['\s*1[.)]\zs [](.\{-})\ze  '         , '' ],
-                                \['\s*\zs[\-*+] [](.\{-})\ze  '        , '' ],
-                                \['\s*- [](.\{-})\zs \ze '             , '•'],
-                                \['\s*+ [](.\{-})\zs \ze '             , '‣'], 
-                                \['\s*1[.)] [](.\{-})\zs \ze '         , '┃'], 
-                                \['\s*\zs1[.)]\ze [](.\{-})  '         , ' ']]
+        for [pattern, cchar] in [['\n\s*1[.)]\zs \[](.\{-})\ze  '    , '' ],
+                                \['\n\s*\zs[\-*+] \[](.\{-})\ze  '   , '' ],
+                                \['\n\s*- \[]([nN].\{-})\zs \ze '    , '•'],
+                                \['\n\s*+ \[]([nN].\{-})\zs \ze '    , '‣'],
+                                \['\n\s*1[.)] \[]([nN].\{-})\zs \ze ', '│'],
+                                \['\n\s*- \[]([tT].\{-})\zs \ze '    , '●'],
+                                \['\n\s*+ \[]([tT].\{-})\zs \ze '    , '▶'],
+                                \['\n\s*1[.)] \[]([tT].\{-})\zs \ze ', '┃'],
+                                \['\n\s*\zs1[.)]\ze \[]([tnTN].\{-})', ' '],
+                                \['\n\s*- \[]([NT].\{-}) \zs '       , 'ॱ'],
+                                \['\n\s*+ \[]([NT].\{-}) \zs '       , 'ॱ'],
+                                \['\n\s*1[.)] \[]([NT].\{-}) \zs '   , 'ॱ']]
             call matchadd('Conceal',pattern, 999, -1, {'conceal':cchar})
         endfor
         let w:matchAdded=1
     endif
 endfunction
-autocmd VimEnter,BufEnter *.q.md call qualia#pretty_id()
+autocmd VimEnter,WinEnter,BufEnter *.q.md call qualia#pretty_id()
+
+function! FilterQualiaFiles()
+    let new_oldfiles = []
+    for v_file in v:oldfiles
+        if v_file !~ '.\{8\}\(-.\{4\}\)\{3\}-.\{12\}\.q\.md$'
+            call add(new_oldfiles, v_file)
+        endif
+    endfor
+    let v:oldfiles = new_oldfiles
+endfunction
+autocmd VimEnter,BufNew *.q.md call FilterQualiaFiles()
+"ॱᐧᣟ⋅⸪⸫⸬⸭⸱ꜗꜘꜙ𑁉𑁊

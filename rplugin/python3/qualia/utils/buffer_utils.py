@@ -1,24 +1,32 @@
 from __future__ import annotations
 
+from functools import cache
 from re import compile
-from typing import cast
+from typing import cast, Optional, TYPE_CHECKING, Callable, Sequence
 
 from lmdb import Cursor
-from markdown_it import MarkdownIt
-from markdown_it.token import Token
-from markdown_it.tree import SyntaxTreeNode
 
 from qualia.config import _COLLAPSED_BULLET, _TO_EXPAND_BULLET, _SHORT_BUFFER_ID
 from qualia.models import NODE_ID_ATTR, Tree, NodeId, BufferNodeId, DuplicateNodeException, LastSync, \
-    UncertainNodeChildrenException, AstMap
-from qualia.utils.common_utils import removeprefix, get_time_uuid, get_key_val
+    UncertainNodeChildrenException, AstMap, Li
+from qualia.utils.common_utils import get_time_uuid, get_key_val
 
-_md_parser = MarkdownIt("zero", {"maxNesting": float('inf')}).enable(
-    ["link", "list", "code", "fence", "html_block"]).parse
+if TYPE_CHECKING:
+    from markdown_it.tree import SyntaxTreeNode
+    from markdown_it.token import Token
 
 
-def get_md_ast(content_lines: list[str]) -> SyntaxTreeNode:
-    root_ast = SyntaxTreeNode(_md_parser('\n'.join(content_lines)))
+@cache
+def _md_parser() -> Callable[[str], Sequence[Token]]:
+    from markdown_it import MarkdownIt
+    return MarkdownIt("zero", {"maxNesting": float('inf')}).enable(
+        ["link", "list", "code", "fence", "html_block"]).parse
+
+
+def get_md_ast(content_lines: Li) -> SyntaxTreeNode:
+    from markdown_it.tree import SyntaxTreeNode
+    from markdown_it.token import Token
+    root_ast = SyntaxTreeNode(_md_parser()('\n'.join(content_lines)))
     root_ast.token = Token(meta={}, map=[0, len(content_lines)], nesting=0, tag="", type="root")
     return root_ast
 
@@ -31,26 +39,55 @@ def buffer_to_node_id(buffer_id: BufferNodeId, buffer_to_node_id_cur: Cursor) ->
 
 
 def get_id_line(line: str, buffer_to_node_id_cur: Cursor) -> tuple[NodeId, str]:
-    id_regex = compile(r"\[]\((.+)\) {0,2}")
+    id_regex = compile(r"\[]\(.(.+?)\) {0,2}")
     id_match = id_regex.match(line)
     if id_match:
         line = removeprefix(line, id_match.group(0))
         buffer_node_id = BufferNodeId(id_match.group(1))
         node_id = buffer_to_node_id(buffer_node_id, buffer_to_node_id_cur)
     else:
-        node_id = get_node_id()
+        node_id = get_time_uuid()
     return node_id, line
 
 
 def previous_sibling_node_line_range(list_item_ast: SyntaxTreeNode, node_id: NodeId) -> AstMap:
-    while True:
-        assert list_item_ast.previous_sibling, (node_id, list_item_ast.map)
-        if list_item_ast.previous_sibling.meta[NODE_ID_ATTR] == node_id:
-            node_loc = list_item_ast.previous_sibling.map
-            assert node_loc
-            break
-        list_item_ast = list_item_ast.previous_sibling
+    previous_sibling = list_item_ast.previous_sibling
+    assert list_item_ast.parent and previous_sibling
+    ordered_item = list_item_ast.parent.type == 'ordered_list'
+    node_loc = (_ordered_locate_previous_sibling if ordered_item else
+                _unordered_locate_previous_sibling)(previous_sibling, node_id)
+    assert node_loc, f"{node_id=} not found in {list_item_ast=} at {list_item_ast.map=}. {ordered_item=}"
     return node_loc
+
+
+def _ordered_locate_previous_sibling(ordered_list_item_ast: SyntaxTreeNode, node_id: NodeId) -> AstMap:
+    for item_sub_ast in ordered_list_item_ast.children:
+        if item_sub_ast.type.endswith("_list"):
+            item_sub_list_ast = item_sub_ast
+            if item_sub_list_ast.type == "ordered_list" and item_sub_list_ast.children:
+                first_ordered_list_item_ast = item_sub_list_ast.children[0]
+                assert first_ordered_list_item_ast.meta[NODE_ID_ATTR] == node_id
+                assert first_ordered_list_item_ast.map
+                return first_ordered_list_item_ast.map
+            else:
+                assert item_sub_list_ast.children
+                cur_list_item_ast = item_sub_list_ast.children[-1]
+                node_loc = _unordered_locate_previous_sibling(cur_list_item_ast, node_id)
+                if node_loc is not None:
+                    return node_loc
+    raise Exception(f"{node_id=} not found in {ordered_list_item_ast=} at {ordered_list_item_ast.map=}")
+
+
+def _unordered_locate_previous_sibling(begin_unordered_list_item_ast: SyntaxTreeNode, node_id: NodeId) -> Optional[
+    AstMap]:
+    cur_list_item_ast: Optional[SyntaxTreeNode] = begin_unordered_list_item_ast
+    while True:
+        assert cur_list_item_ast
+        if cur_list_item_ast.meta[NODE_ID_ATTR] == node_id:
+            return cur_list_item_ast.map
+        cur_list_item_ast = cur_list_item_ast.previous_sibling
+        if cur_list_item_ast is None:
+            return None
 
 
 def raise_if_duplicate_sibling(list_item_ast: SyntaxTreeNode, node_id: NodeId, tree: Tree) -> None:
@@ -119,7 +156,7 @@ def copy_list_ast_type(target_list_ast: SyntaxTreeNode, source_list_ast: SyntaxT
     # Token.tag, Token.type
     for state in ("opening", "closing"):
         for attr in ("tag", "type"):
-            setattr(getattr(target_list_ast.nester_tokens, state).opening, attr,
+            setattr(getattr(target_list_ast.nester_tokens, state), attr,
                     getattr(getattr(source_list_ast.nester_tokens, state), attr))
 
 
@@ -153,9 +190,8 @@ def preserve_expand_consider_sub_tree(list_item_ast: SyntaxTreeNode, node_id: No
     return expand, consider_sub_tree
 
 
-def get_node_id() -> NodeId:
-    while True:
-        node_id = get_time_uuid()
-        if ")" not in node_id:
-            break
-    return node_id
+def removeprefix(input_string: str, suffix: str) -> str:
+    # in 3.9 str.removeprefix
+    if suffix and input_string.startswith(suffix):
+        return input_string[len(suffix):]
+    return input_string

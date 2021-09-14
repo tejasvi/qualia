@@ -1,36 +1,38 @@
 from __future__ import annotations
 
 from itertools import zip_longest
-from typing import Union, Iterator, cast
+from typing import Union, cast, Iterator, TYPE_CHECKING
 
 from lmdb import Cursor
-from markdown_it.tree import SyntaxTreeNode
 from orderedset import OrderedSet
 
-from qualia.models import NodeId, View, ProcessState, NODE_ID_ATTR, Tree, LastSync, Cursors, AstMap
+from qualia.models import NodeId, View, ProcessState, NODE_ID_ATTR, Tree, LastSync, Cursors, AstMap, Li
 from qualia.utils.buffer_utils import get_md_ast, get_id_line, raise_if_duplicate_sibling, get_ast_sub_lists, \
-    preserve_expand_consider_sub_tree
-from qualia.utils.common_utils import removeprefix, conflict
-from qualia.utils.render_utils import node_to_buffer_id
+    preserve_expand_consider_sub_tree, removeprefix
+from qualia.utils.common_utils import conflict
+from qualia.utils.render_utils import buffer_node_tracker
+
+if TYPE_CHECKING:
+    from markdown_it.tree import SyntaxTreeNode
 
 
-class Process:
-    _lines: list[str]
+class ParseProcess:
+    _lines: Li
     _changes: ProcessState
     buffer_to_node_id_cur: Cursor
 
     def __init__(self) -> None:
         pass
 
-    def process_lines(self, lines: list[str], main_id: NodeId, last_sync: LastSync, cursors: Cursors) -> tuple[
+    def process_lines(self, lines: Li, main_id: NodeId, last_sync: LastSync, cursors: Cursors, transposed) -> tuple[
         View, ProcessState]:
         if not lines:
-            lines = ['']
-        self.buffer_to_node_id_cur = cursors.buffer_to_node_id
+            lines = cast(Li, [''])
+        self.buffer_to_node_id_cur = cursors.buffer_id_node_id
         self._changes = ProcessState()
         self._lines = lines
 
-        self._lines[0] = f"[]({node_to_buffer_id(main_id, cursors)})  " + self._lines[0]
+        self._lines[0] = buffer_node_tracker(main_id, transposed, cursors) + self._lines[0]
 
         buffer_tree: Tree = {}  # {node_id: {descendant_1: {..}, descendant_2: {..}, ..}}
 
@@ -41,8 +43,8 @@ class Process:
         root_view = View(*data)
         return root_view, self._changes
 
-    def _process_list_item_ast(self, list_item_ast: SyntaxTreeNode, tree: Tree,
-                               ordered_descendant_asts: Iterator[SyntaxTreeNode], last_sync: LastSync):
+    def _process_list_item_ast(self, list_item_ast, tree, ordered_descendant_asts, last_sync):
+        # type:(SyntaxTreeNode, Tree, Iterator[SyntaxTreeNode], LastSync)->None
         is_buffer_ast = list_item_ast.type == 'root'
         assert list_item_ast.map
         content_start_line_num = list_item_ast.map[0]
@@ -68,22 +70,25 @@ class Process:
             list_item_ast, node_id, sub_list_tree, last_sync)
         tree[node_id] = sub_list_tree if expand else None
 
-        content_lines = [id_line] + [
+        content_lines = cast(Li, [id_line] + [
             removeprefix(line, " " * content_indent)
             for line in self._lines[content_start_line_num + 1: content_end_line_num]
-        ]
+        ])
 
         self._process_node(node_id, content_lines, OrderedSet(sub_list_tree) if consider_sub_list_tree else None,
                            last_sync)
 
-    def _process_list_item_asts(self, list_item_asts: list[SyntaxTreeNode], last_sync: LastSync) -> Tree:
+    def _process_list_item_asts(self, list_item_asts, last_sync):
+        # type:(list[SyntaxTreeNode], LastSync) -> Tree
         sub_list_tree: Tree = {}
         if not list_item_asts:
             return sub_list_tree
-        parent_end_line = cast(AstMap, cast(SyntaxTreeNode, list_item_asts[0].parent).map)[1]
+        parent_list_ast = list_item_asts[0].parent
+        assert parent_list_ast
+        ast_parent_end_line = cast(AstMap, parent_list_ast.map)[1]
         for list_item_ast, list_end_line in zip_longest(list_item_asts,
                                                         (cast(AstMap, ast.map)[0] for ast in list_item_asts[1:]),
-                                                        fillvalue=parent_end_line):
+                                                        fillvalue=ast_parent_end_line):
             descendant_asts = list_item_ast.children
             if not descendant_asts:
                 continue
@@ -104,7 +109,7 @@ class Process:
                 self._process_list_item_ast(descendant_asts[0], sub_list_tree, iter(later_descendant_asts), last_sync)
         return sub_list_tree
 
-    def _process_node(self, node_id: NodeId, content_lines: list[str], descendant_ids: Union[None, OrderedSet],
+    def _process_node(self, node_id: NodeId, content_lines: Li, descendant_ids: Union[None, OrderedSet],
                       last_sync: LastSync):
         if node_id not in last_sync:
             self._changes.changed_content_map[node_id] = content_lines
