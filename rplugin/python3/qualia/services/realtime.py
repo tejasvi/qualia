@@ -7,14 +7,13 @@ from time import sleep, time
 from typing import TYPE_CHECKING, Callable, cast
 
 from qualia.config import FIREBASE_WEB_APP_CONFIG
-from qualia.models import RealtimeBroadcastPacket, RealtimeDbIndexDisabledError, RealtimeStringifiedChildren, \
-    RealtimeStringifiedContent, \
-    RealtimeContent
-from qualia.services.utils.common_service_utils import get_trigger_event
+from qualia.models import RealtimeBroadcastPacket, RealtimeDbIndexDisabledError, RealtimeStringifiedChildren, RealtimeStringifiedContent, RealtimeContent, NodeId, Li
+from qualia.services.utils.service_utils import get_trigger_event
 from qualia.services.utils.realtime_utils import process_children_broadcast, process_content_broadcast, CHILDREN_KEY, \
     CONTENT_KEY, RealtimeUtils, network_errors, tuplify_values
 from qualia.utils.bootstrap_utils import bootstrap
-from qualia.utils.common_utils import Database, logger, exception_traceback, StartLoggedThread
+from qualia.utils.common_utils import logger, exception_traceback, StartLoggedThread
+from qualia.database import Database
 
 if TYPE_CHECKING:
     from firebase_admin.db import Event as FirebaseEvent
@@ -101,14 +100,14 @@ class Realtime(RealtimeUtils):
         children_changed = content_changed = False
         broadcast_conflicts: RealtimeBroadcastPacket = {}
 
-        with Database() as cursors:
+        with Database() as db:
             # Process content before to avoid discarding new children
             content_conflicts = None
             if CONTENT_KEY in value:
                 try:
                     content_changed, content_conflicts = process_content_broadcast(
                         cast(RealtimeStringifiedContent, tuplify_values(value[CONTENT_KEY])),
-                        cursors, 'encryption_enabled' in value and value['encryption_enabled'])
+                        db, 'encryption_enabled' in value and value['encryption_enabled'])
                 except InvalidToken as e:
                     logger.critical(
                         "Can't decrypt broadcast content. Ensure the encryption keys match." + exception_traceback(e))
@@ -116,7 +115,7 @@ class Realtime(RealtimeUtils):
             if CHILDREN_KEY in value:
                 children_downstream_data = cast(RealtimeStringifiedChildren, tuplify_values(value[CHILDREN_KEY]))
                 children_changed, children_broadcast_conflicts = process_children_broadcast(children_downstream_data,
-                                                                                            cursors)
+                                                                                            db)
 
                 if content_conflicts:
                     children_broadcast_conflicts.setdefault(CONTENT_KEY, cast(RealtimeContent, {})).update(
@@ -154,9 +153,10 @@ class Realtime(RealtimeUtils):
                 next_conflict = self.broadcast_conflicts_queue.get_nowait()
             except Empty:
                 break
-            for conflict_type in {CONTENT_KEY, CHILDREN_KEY}:
-                if conflict_type in next_conflict:
-                    first_conflict.setdefault(conflict_type, {}).update(next_conflict[conflict_type])
+            if CONTENT_KEY in next_conflict:
+                first_conflict.setdefault(CONTENT_KEY, cast(dict[NodeId, tuple[str, Li]], {})).update(next_conflict[CONTENT_KEY])
+            if CHILDREN_KEY in next_conflict:
+                first_conflict.setdefault(CHILDREN_KEY, cast(dict[NodeId, tuple[str, list[NodeId]]], {})).update(next_conflict[CHILDREN_KEY])
 
 
 if __name__ == "__main__" and argv[-1].endswith("realtime.py"):

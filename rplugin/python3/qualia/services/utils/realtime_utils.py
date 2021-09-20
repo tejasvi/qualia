@@ -9,15 +9,14 @@ from ntplib import NTPClient, NTPException
 from orderedset import OrderedSet
 
 from qualia.config import ENCRYPT_REALTIME
-from qualia.models import RealtimeBroadcastPacket, NodeId, Cursors, RealtimeContent, RealtimeStringifiedData, \
+from qualia.models import RealtimeBroadcastPacket, NodeId, RealtimeContent, RealtimeStringifiedData, \
     RealtimeStringifiedContent, RealtimeStringifiedChildren, StringifiedChildren, \
     StringifiedContent, El, Li, RealtimeChildren
-from qualia.services.utils.common_service_utils import content_hash
-from qualia.utils.common_utils import conflict, set_node_content_lines, logger, \
-    ordered_data_hash, set_node_descendants, StartLoggedThread, get_node_descendants, get_node_content_lines, \
-    Database, \
-    get_set_client, exception_traceback, decrypt_lines, encrypt_lines, children_hash, children_data_hash, \
-    absent_node_content_lines
+from qualia.services.utils.service_utils import content_hash
+from qualia.utils.common_utils import conflict, logger, \
+    ordered_data_hash, StartLoggedThread, exception_traceback, decrypt_lines, encrypt_lines, \
+    children_data_hash, absent_node_content_lines
+from qualia.database import Database
 
 if TYPE_CHECKING:
     from firebase_admin.db import Reference, Event as FirebaseEvent
@@ -37,21 +36,21 @@ def sync_with_realtime_db(data: RealtimeBroadcastPacket, realtime_session) -> No
         StartLoggedThread(target=broadcast_closure, name="ClientBroadcast")
 
 
-def merge_children_with_local(node_id: NodeId, new_children_ids: Iterable[NodeId], cursors: Cursors) -> OrderedSet[
+def merge_children_with_local(node_id: NodeId, new_children_ids: Iterable[NodeId], db: Database) -> OrderedSet[
     NodeId]:
-    merged_children_ids = get_node_descendants(cursors, node_id, False, False)
+    merged_children_ids = db.get_node_descendants(node_id, False, False)
     merged_children_ids.update(new_children_ids)
     return OrderedSet(sorted(merged_children_ids))  # To prevent cyclic conflicts)
 
 
-def merge_content_with_local(node_id: NodeId, new_content_lines: Li, cursors: Cursors) -> Li:
-    db_content_lines = get_node_content_lines(cursors, node_id)
+def merge_content_with_local(node_id: NodeId, new_content_lines: Li, db: Database) -> Li:
+    db_content_lines = db.get_node_content_lines(node_id)
     return new_content_lines if db_content_lines is None else conflict(new_content_lines, db_content_lines)
 
 
-def process_content_broadcast(data_dict: RealtimeStringifiedContent, cursors: Cursors, content_encrypted: bool) -> \
-tuple[
-    bool, RealtimeContent]:
+def process_content_broadcast(data_dict: RealtimeStringifiedContent, db: Database, content_encrypted: bool) -> \
+        tuple[
+            bool, RealtimeContent]:
     content_conflicts: RealtimeContent = {}
     data_changed = False
 
@@ -59,7 +58,7 @@ tuple[
         downstream_content = decrypt_lines(cast(El, downstream_data)) if content_encrypted else cast(Li,
                                                                                                      downstream_data)
         downstream_hash = ordered_data_hash(downstream_content)
-        db_hash = content_hash(node_id, cursors)
+        db_hash = content_hash(node_id, db)
 
         if downstream_hash == db_hash:
             continue  # spurious rebroadcasts
@@ -67,14 +66,14 @@ tuple[
 
         previous_version_mismatch = db_hash is not None and db_hash != last_hash
         if previous_version_mismatch:
-            downstream_content = merge_content_with_local(node_id, downstream_content, cursors)
+            downstream_content = merge_content_with_local(node_id, downstream_content, db)
             content_conflicts[node_id] = downstream_hash, downstream_content
-        set_node_content_lines(node_id, downstream_content, cursors)
+        db.set_node_content_lines(node_id, downstream_content)
 
     return data_changed, content_conflicts
 
 
-def process_children_broadcast(data_dict: RealtimeStringifiedChildren, cursors: Cursors) -> tuple[
+def process_children_broadcast(data_dict: RealtimeStringifiedChildren, db: Database) -> tuple[
     bool, RealtimeBroadcastPacket]:
     broadcast_conflicts: RealtimeBroadcastPacket = {}
     data_changed = False
@@ -82,13 +81,13 @@ def process_children_broadcast(data_dict: RealtimeStringifiedChildren, cursors: 
     for downstream_data, last_hash, node_id in parse_realtime_data_item(data_dict):
         downstream_children_ids = OrderedSet(cast(list[NodeId], downstream_data))
         downstream_hash = children_data_hash(downstream_children_ids)
-        db_hash = children_hash(node_id, cursors)
+        db_hash = db.children_hash(node_id)
         if downstream_hash == db_hash:
             continue  # spurious rebroadcasts
         data_changed = True
         previous_version_mismatch = db_hash != last_hash
         if previous_version_mismatch:
-            merged_children = merge_children_with_local(node_id, downstream_children_ids, cursors)
+            merged_children = merge_children_with_local(node_id, downstream_children_ids, db)
             downstream_missing_children_ids = merged_children.difference(downstream_children_ids)
 
             override_hash = downstream_hash
@@ -96,7 +95,7 @@ def process_children_broadcast(data_dict: RealtimeStringifiedChildren, cursors: 
                 # Send content else if new child content unknown to reciever cyclic:  invalid > ignored > rebroadcast
                 broadcast_conflicts.setdefault(CONTENT_KEY, cast(RealtimeContent, {})).update(
                     {child_id: (ordered_data_hash(
-                        absent_node_content_lines), get_node_content_lines(cursors, child_id)) for child_id
+                        absent_node_content_lines), db.get_node_content_lines(child_id)) for child_id
                         in downstream_missing_children_ids})
                 override_hash = db_hash
 
@@ -104,7 +103,7 @@ def process_children_broadcast(data_dict: RealtimeStringifiedChildren, cursors: 
                 merged_children)
 
             downstream_children_ids = merged_children
-        set_node_descendants(node_id, downstream_children_ids, cursors, False)
+        db.set_node_descendants(node_id, downstream_children_ids, False)
 
     return data_changed, broadcast_conflicts
 
@@ -131,8 +130,8 @@ class RealtimeUtils(metaclass=ABCMeta):
     offset_seconds: float
 
     def __init__(self) -> None:
-        with Database() as cursors:
-            self.client_id = get_set_client(cursors.metadata)["client_id"]
+        with Database() as db:
+            self.client_id = db.get_set_client()["client_id"]
         self.initialization_event = Event()
         self.others_online: bool = False
 

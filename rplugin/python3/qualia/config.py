@@ -56,7 +56,7 @@ if DEBUG:
     QUALIA_CONFIG_DIR += '_debug'
 
 if not OVERRIDE_ADVANCED_SETTINGS:
-    _SHORT_BUFFER_ID = True #not DEBUG
+    _SHORT_BUFFER_ID = True  # not DEBUG
     _SORT_SIBLINGS = False
 
     _EXPANDED_BULLET = '-'
@@ -78,7 +78,7 @@ if not OVERRIDE_ADVANCED_SETTINGS:
     _LOG_FILENAME = _LOG_FOLDER.joinpath('logs.txt')
 
     # Before starting resets data in QUALIA_DATA_DIR (DEBUG adds '_debug' to the path by default)
-    _RESET_APP_FOLDER = False
+    _RESET_APP_FOLDER = True
 
     for _path in (_FILE_FOLDER, _GIT_FOLDER, _DB_FOLDER, _LOG_FOLDER):
         if _RESET_APP_FOLDER:

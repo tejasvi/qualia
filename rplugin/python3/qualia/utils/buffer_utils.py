@@ -6,12 +6,11 @@ from math import ceil
 from re import compile
 from typing import cast, Optional, TYPE_CHECKING, Callable, Sequence
 
-from lmdb import Cursor
-
 from qualia.config import _COLLAPSED_BULLET, _TO_EXPAND_BULLET, _SHORT_BUFFER_ID, _BUFFER_ID_STORE_BYTES
 from qualia.models import NODE_ID_ATTR, Tree, NodeId, BufferNodeId, DuplicateNodeException, LastSync, \
     UncertainNodeChildrenException, AstMap, Li
-from qualia.utils.common_utils import get_time_uuid, get_key_val
+from qualia.utils.common_utils import get_time_uuid
+from qualia.database import Database
 
 if TYPE_CHECKING:
     from markdown_it.tree import SyntaxTreeNode
@@ -38,21 +37,20 @@ _buffer_id_decoder: Callable[[BufferNodeId], bytes] = lambda a: b64decode(
     a.rjust(ceil(_BUFFER_ID_STORE_BYTES * 8 / 6), 'A') + "==")  # base65536.decode
 
 
-def buffer_to_node_id(buffer_id: BufferNodeId, buffer_to_node_id_cur: Cursor) -> NodeId:
+def buffer_to_node_id(buffer_id: BufferNodeId, db: Database) -> NodeId:
     if not _SHORT_BUFFER_ID:
         return cast(NodeId, buffer_id)
     buffer_id_bytes = _buffer_id_decoder(buffer_id)
-    node_id = get_key_val(buffer_id_bytes, buffer_to_node_id_cur, True)
-    return cast(NodeId, node_id)
+    return db.buffer_id_bytes_to_node_id(buffer_id_bytes)
 
 
-def get_id_line(line: str, buffer_to_node_id_cur: Cursor) -> tuple[NodeId, str]:
+def get_id_line(line: str, db: Database) -> tuple[NodeId, str]:
     id_regex = compile(r"\[]\(.(.+?)\) {0,2}")
     id_match = id_regex.match(line)
     if id_match:
         line = removeprefix(line, id_match.group(0))
         buffer_node_id = BufferNodeId(id_match.group(1))
-        node_id = buffer_to_node_id(buffer_node_id, buffer_to_node_id_cur)
+        node_id = buffer_to_node_id(buffer_node_id, db)
     else:
         node_id = get_time_uuid()
     return node_id, line

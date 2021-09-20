@@ -2,7 +2,7 @@ from logging import getLogger
 from time import sleep
 from typing import Optional
 
-from orderedset._orderedset import OrderedSet
+from orderedset import OrderedSet
 from pynvim import plugin, Nvim, autocmd, command, attach, function
 
 from qualia.config import _FZF_LINE_DELIMITER, NVIM_DEBUG_PIPE
@@ -10,8 +10,8 @@ from qualia.driver import PluginDriver
 from qualia.models import NodeId
 from qualia.services.search import matching_nodes_content, fzf_input_line
 from qualia.utils.bootstrap_utils import bootstrap
-from qualia.utils.common_utils import Database, exception_traceback, normalized_search_prefixes, save_root_view, \
-    get_node_content_lines, delete_node, logger, get_node_descendants, set_node_descendants
+from qualia.utils.common_utils import exception_traceback, normalized_search_prefixes, logger
+from qualia.database import Database
 from qualia.utils.plugin_utils import get_orphan_node_ids, PluginUtils
 
 
@@ -46,8 +46,8 @@ class Qualia(PluginDriver):
     def hoist_node(self) -> None:
         line_num = self.current_line_number()
         view = self.line_node_view(line_num)
-        with Database() as cursors:
-            save_root_view(view, cursors.views)
+        with Database() as db:
+            db.set_node_view(view, self.buffer_transposed(self.nvim.current.buffer.name))
         self.navigate_node(view.main_id, True)
 
     @command("ToggleBufferSync", sync=True)
@@ -57,17 +57,18 @@ class Qualia(PluginDriver):
             self.trigger_sync(True)
         self.print_message("Buffer sync paused" if self.enabled else "Buffer sync enabled")
 
-    @command("ElevateNode", sync=True)  # TODO: Range
-    def move_up(self) -> None:
+    @command("PromoteNode", sync=True)  # TODO: Range
+    def promote_node(self) -> None:
         current_line_number = self.current_line_number()
         try:
             ancestory = self.node_ancestory_info(current_line_number, 2)
+            cur_line_info = ancestory[0]
+            assert cur_line_info.nested_level >= 2
         except Exception as e:
-            self.print_message("Can't move further up.")
-            logger.debug(exception_traceback(e))
+            self.print_message("Can't promote node beyond current level.")
+            logger.critical(exception_traceback(e))
             return
 
-        cur_line_info = ancestory[0]
         parent_line_info = ancestory[1]
 
         transposed = self.buffer_transposed(self.nvim.current.buffer.name)
@@ -75,14 +76,14 @@ class Qualia(PluginDriver):
         parent_id = cur_line_info.parent_view.main_id
         grandparent_id = parent_line_info.parent_view.main_id
 
-        with Database() as cursors:
-            cur_node_siblings = get_node_descendants(cursors, parent_id, transposed, False)
+        with Database() as db:
+            cur_node_siblings = db.get_node_descendants(parent_id, transposed, False)
             cur_node_siblings.remove(cur_node_id)
-            set_node_descendants(parent_id, cur_node_siblings, cursors, transposed)
+            db.set_node_descendants(parent_id, cur_node_siblings, transposed)
 
-            parent_node_siblings_list = list(get_node_descendants(cursors, grandparent_id, transposed, False))
+            parent_node_siblings_list = list(db.get_node_descendants(grandparent_id, transposed, False))
             parent_node_siblings_list.insert(parent_node_siblings_list.index(parent_id) + 1, cur_node_id)
-            set_node_descendants(grandparent_id, OrderedSet(parent_node_siblings_list), cursors, transposed)
+            db.set_node_descendants(grandparent_id, OrderedSet(parent_node_siblings_list), transposed)
 
         self.trigger_sync(True)
 
@@ -94,6 +95,7 @@ class Qualia(PluginDriver):
             self.print_message("Can't toggle top level node")
         else:
             cur_context = cur_line_info.parent_view.sub_tree
+            assert cur_context is not None
             cur_node_id = cur_line_info.node_id
             currently_expanded = cur_context[cur_node_id] is not None
 
@@ -131,7 +133,9 @@ class Qualia(PluginDriver):
     @command(PluginUtils.fzf_sink_command, nargs=1, sync=True)
     def fzf_sink(self, selections: list[str]):
         for i, selected in enumerate(selections):
-            node_id = NodeId(selected[:selected.index(_FZF_LINE_DELIMITER)])
+            # FZF adds confusing backslash before delimiter, so idx - 1
+            # `017b99da-b1b5-19e9-e98d-8584cf46cfcf\^Ilaskdjf`
+            node_id = NodeId(selected[:selected.index(_FZF_LINE_DELIMITER) - 1])
             node_filepath = self.node_id_to_filepath(node_id, False)
             if i == 0:
                 self.replace_with_file(node_filepath, False)
@@ -146,9 +150,9 @@ class Qualia(PluginDriver):
 
     @command("ListOrphans", sync=True)
     def list_orphans(self) -> None:
-        with Database() as cursors:
-            orphan_fzf_lines = [fzf_input_line(node_id, get_node_content_lines(cursors, node_id)) for node_id in
-                                get_orphan_node_ids(cursors)]
+        with Database() as db:
+            orphan_fzf_lines = [fzf_input_line(node_id, db.get_node_content_lines(node_id)) for node_id in
+                                get_orphan_node_ids(db)]
         self.fzf_run(orphan_fzf_lines, '')
 
     @command("RemoveOrphans", sync=True, nargs='?')
@@ -156,9 +160,9 @@ class Qualia(PluginDriver):
         skip_confirm = args and int(args[0])
         if not (skip_confirm or self.nvim.funcs.confirm("Remove orphans?", "&Be kind\n&Yes", 1) == 2):
             return
-        with Database() as cursors:
-            for orphan_node_id in get_orphan_node_ids(cursors):
-                delete_node(cursors, orphan_node_id)
+        with Database() as db:
+            for orphan_node_id in get_orphan_node_ids(db):
+                db.delete_node(orphan_node_id)
 
     @function("CurrentNodeId", sync=True)
     def current_node_id(self, line_num: list[int]) -> NodeId:

@@ -1,15 +1,14 @@
 from __future__ import annotations
 
+from sys import path, version_info, argv
+
 # from qualia.utils.perf_utils import perf_imports
 #
 # perf_imports()
-
 # if True:
 #     from typeguard.importhook import install_import_hook
 #
 #     install_import_hook('qualia')
-
-from sys import path, version_info, argv
 
 # Detect if loaded as plugin or from external script
 if argv[-1].endswith("qualia") or argv[-1].endswith("__init__.py"):

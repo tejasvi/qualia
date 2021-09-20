@@ -2,9 +2,9 @@ from threading import Event, current_thread
 from time import sleep
 from typing import Callable, Optional
 
-from qualia.models import NodeId, Cursors, KeyNotFoundError
-from qualia.utils.common_utils import StartLoggedThread, logger, exception_traceback, ordered_data_hash, \
-    get_node_content_lines
+from qualia.models import NodeId, KeyNotFoundError
+from qualia.utils.common_utils import StartLoggedThread, logger, exception_traceback, ordered_data_hash
+from qualia.database import Database
 
 
 def get_trigger_event(callback: Callable, throttle_seconds: float) -> Event:
@@ -27,8 +27,8 @@ def get_trigger_event(callback: Callable, throttle_seconds: float) -> Event:
     return service_event
 
 
-def content_hash(key: NodeId, cursors: Cursors) -> Optional[str]:
+def content_hash(node_id: NodeId, db: Database) -> Optional[str]:
     try:
-        return ordered_data_hash(get_node_content_lines(cursors, key))
+        return ordered_data_hash(db.get_node_content_lines(node_id))
     except KeyNotFoundError:
         return None

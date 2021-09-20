@@ -8,15 +8,15 @@ from orderedset import OrderedSet
 
 path.append(Path(__file__).parent.parent.as_posix())  # noqa: E402
 
-from typing import cast, Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
-from qualia.config import _ROOT_ID_KEY, GIT_BRANCH, GIT_AUTHORIZED_REMOTE, _GIT_FOLDER, \
+from qualia.config import GIT_BRANCH, GIT_AUTHORIZED_REMOTE, _GIT_FOLDER, \
     _GIT_ENCRYPTION_ENABLED_FILE_NAME
-from qualia.models import Cursors, NodeId, CustomCalledProcessError, GitChangedNodes, GitMergeError, KeyNotFoundError
+from qualia.models import CustomCalledProcessError, GitChangedNodes, GitMergeError, KeyNotFoundError
 from qualia.utils.bootstrap_utils import repository_setup, bootstrap
-from qualia.utils.common_utils import cd_run_git_cmd, Database, file_name_to_node_id, get_key_val, logger, \
-    exception_traceback, get_node_descendants, set_node_descendants, conflict, set_node_content_lines, \
-    get_node_content_lines, trigger_buffer_change
+from qualia.utils.common_utils import cd_run_git_cmd, file_name_to_node_id, logger, \
+    exception_traceback, conflict, trigger_buffer_change
+from qualia.database import Database
 from qualia.services.utils.git_utils import create_markdown_file, repository_file_to_content_children, \
     GitInit
 
@@ -32,13 +32,13 @@ def sync_with_git(nvim):
         with GitInit():
             changed_file_names = fetch_from_remote()
             repository_encrypted = _GIT_FOLDER.joinpath(_GIT_ENCRYPTION_ENABLED_FILE_NAME).is_file()
-            with Database() as cursors:
+            with Database() as db:
                 if changed_file_names:
-                    directory_to_db(cursors, changed_file_names, repository_encrypted)
+                    directory_to_db(db, changed_file_names, repository_encrypted)
                     logger.debug("Git Change")
                     if nvim:
                         trigger_buffer_change(nvim)
-                db_to_directory(cursors, repository_encrypted)
+                db_to_directory(db, repository_encrypted)
             push_to_remote()
     except Exception as e:
         if nvim and isinstance(e, GitMergeError):
@@ -90,7 +90,7 @@ def push_to_remote() -> None:
             logger.critical("Could not push: " + str(e))
 
 
-def directory_to_db(cursors: Cursors, changed_file_names: list[str], repository_encrypted: bool) -> None:
+def directory_to_db(db: Database, changed_file_names: list[str], repository_encrypted: bool) -> None:
     changed_nodes: GitChangedNodes = {}
     for file_name in changed_file_names:
         relative_file_path = Path(file_name)
@@ -106,43 +106,38 @@ def directory_to_db(cursors: Cursors, changed_file_names: list[str], repository_
                     changed_nodes[node_id] = OrderedSet(children_ids), content_lines
     logger.debug(f"d2db {changed_file_names} {changed_nodes}")
 
-    sync_git_to_db(changed_nodes, cursors)
+    sync_git_to_db(changed_nodes, db)
 
 
-def sync_git_to_db(changed_nodes: GitChangedNodes, cursors: Cursors) -> None:
+def sync_git_to_db(changed_nodes: GitChangedNodes, db: Database) -> None:
     for cur_node_id, (children_ids, content_lines) in changed_nodes.items():
-        if cursors.unsynced_children.set_key(cur_node_id.encode()):
-            db_children_ids = get_node_descendants(cursors, cur_node_id, False, True)
+        if db.pop_if_unsynced_children(cur_node_id):
+            db_children_ids = db.get_node_descendants(cur_node_id, False, True)
             children_ids.update(db_children_ids)
-            cursors.unsynced_children.delete()
-        set_node_descendants(cur_node_id, children_ids, cursors, False)
+        db.set_node_descendants(cur_node_id, children_ids, False)
 
-        logger.debug(f"{changed_nodes} {cursors.unsynced_content.set_key(cur_node_id.encode())}")
-        if cursors.unsynced_content.set_key(cur_node_id.encode()):
+        if db.pop_if_unsynced_content(cur_node_id):
             try:
-                db_content_lines = get_node_content_lines(cursors, cur_node_id)
+                db_content_lines = db.get_node_content_lines(cur_node_id)
             except KeyNotFoundError:
                 pass
             else:
                 content_lines = conflict(content_lines, db_content_lines)
-            cursors.unsynced_content.delete()
-        set_node_content_lines(cur_node_id, content_lines, cursors)
+        db.set_node_content_lines(cur_node_id, content_lines)
 
 
-def db_to_directory(cursors: Cursors, repository_encrypted: bool) -> None:
+def db_to_directory(db: Database, repository_encrypted: bool) -> None:
     existing_markdown_file_paths = glob(_GIT_FOLDER.as_posix() + "/*.md")
     for md_file_path in existing_markdown_file_paths:
         Path(md_file_path).unlink()
 
-    root_id = cast(NodeId, get_key_val(_ROOT_ID_KEY, cursors.metadata, True))
+    root_id = db.get_root_id()
     visited = {root_id}
     node_stack = [root_id]
     while node_stack:
         node_id = node_stack.pop()
-        valid_node_children_ids = create_markdown_file(cursors, node_id, repository_encrypted)
-        for cursor in (cursors.unsynced_content, cursors.unsynced_children):
-            if cursor.set_key(node_id.encode()):
-                cursor.delete()
+        valid_node_children_ids = create_markdown_file(db, node_id, repository_encrypted)
+        db.delete_unsynced_content_children(node_id)
         node_stack.extend(valid_node_children_ids.difference(visited))
         visited.update(valid_node_children_ids)
 

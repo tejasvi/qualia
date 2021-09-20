@@ -3,24 +3,25 @@ from typing import cast
 
 from orderedset import OrderedSet
 
-from qualia.config import GIT_BRANCH, GIT_AUTHORIZED_REMOTE, _GIT_FOLDER, _ROOT_ID_KEY, ENCRYPT_DB, \
-    _DB_ENCRYPTION_ENABLED_KEY, ENCRYPT_NEW_GIT_REPOSITORY, _GIT_ENCRYPTION_ENABLED_FILE_NAME, \
+from qualia.config import GIT_BRANCH, GIT_AUTHORIZED_REMOTE, _GIT_FOLDER, ENCRYPT_DB, \
+    ENCRYPT_NEW_GIT_REPOSITORY, _GIT_ENCRYPTION_ENABLED_FILE_NAME, \
     _GIT_ENCRYPTION_DISABLED_FILE_NAME
-from qualia.models import Cursors, DbClient, CustomCalledProcessError, NodeId, Li, El
+from qualia.models import DbClient, CustomCalledProcessError, NodeId, Li, KeyNotFoundError
 from qualia.services.backup import backup_db
 from qualia.services.listener import RpcListenExternal
-from qualia.utils.common_utils import cd_run_git_cmd, exception_traceback, StartLoggedThread, get_set_client, \
-    set_node_content_lines, _set_node_descendants_value, open_write_lf, decrypt_lines, get_db_node_content_lines, \
-    cursor_keys, set_node_descendants
-from qualia.utils.common_utils import logger, get_key_val, set_key_val, Database
+from qualia.utils.common_utils import cd_run_git_cmd, exception_traceback, StartLoggedThread, open_write_lf
+from qualia.utils.common_utils import logger
+from qualia.database import Database
 
 
-def ensure_root_node(cursors: Cursors) -> None:
-    if get_key_val(_ROOT_ID_KEY, cursors.metadata, False) is None:
+def ensure_root_node(db: Database) -> None:
+    try:
+        db.get_root_id()
+    except KeyNotFoundError:
         root_id = cast(NodeId, "017b99da-b1b5-19e9-e98d-8584cf46cfcf")  # get_time_uuid()
-        set_node_content_lines(root_id, cast(Li, ['']), cursors)
-        set_node_descendants(root_id,OrderedSet(), cursors,  False)
-        set_key_val(_ROOT_ID_KEY, root_id, cursors.metadata, False)
+        db.set_node_content_lines(root_id, cast(Li, ['']))
+        db.set_node_descendants(root_id, OrderedSet(), False)
+        db.set_root_id(root_id)
 
 
 repository_setup = Event()
@@ -59,28 +60,16 @@ def setup_repository(client_data: DbClient) -> None:
     repository_setup.set()
 
 
-def setup_encryption(cursors: Cursors) -> None:
-    db_encrypted = get_key_val(_DB_ENCRYPTION_ENABLED_KEY, cursors.metadata, False)
-    if bool(ENCRYPT_DB) != bool(db_encrypted):
-        for node_id in cursor_keys(cursors.content):
-            node_id = cast(NodeId, node_id)
-            db_content_lines = get_db_node_content_lines(cursors, node_id)
-            if ENCRYPT_DB:
-                content_lines = cast(Li, db_content_lines)
-            else:
-                db_content_lines = cast(El, db_content_lines)
-                content_lines = decrypt_lines(db_content_lines)
-            set_node_content_lines(node_id, content_lines, cursors)
-        for _node_id in cursor_keys(cursors.bloom_filters):
-            cursors.bloom_filters.delete()
-        set_key_val(_DB_ENCRYPTION_ENABLED_KEY, bool(ENCRYPT_DB), cursors.metadata, True)
+def setup_encryption(db: Database) -> None:
+    if bool(ENCRYPT_DB) != db.db_encrypted():
+        db.toggle_encryption()
 
 
 def bootstrap() -> None:
-    with Database() as cursors:
-        setup_encryption(cursors)
-        client_data = get_set_client(cursors.metadata)
+    with Database() as db:
+        setup_encryption(db)
+        client_data = db.get_set_client()
         StartLoggedThread(target=lambda: setup_repository(client_data), name="SetupRepo")
-        ensure_root_node(cursors)
+        ensure_root_node(db)
     StartLoggedThread(target=backup_db, name="BackupDB")
     StartLoggedThread(target=RpcListenExternal, name="RPClistener")

@@ -1,6 +1,6 @@
 from time import time
 
-s=time()
+s = time()
 from pathlib import Path
 from sys import path
 from typing import TYPE_CHECKING

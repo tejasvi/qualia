@@ -10,9 +10,10 @@ from qualia.models import View, DuplicateNodeException, UncertainNodeChildrenExc
 from qualia.render import render
 from qualia.services.git import sync_with_git
 from qualia.services.realtime import Realtime
-from qualia.services.utils.common_service_utils import get_trigger_event
+from qualia.services.utils.service_utils import get_trigger_event
 from qualia.sync import sync_buffer
-from qualia.utils.common_utils import Database, logger, trigger_buffer_change
+from qualia.utils.common_utils import logger, trigger_buffer_change
+from qualia.database import Database
 from qualia.utils.plugin_utils import PluginUtils
 
 if TYPE_CHECKING:
@@ -34,11 +35,11 @@ class PluginDriver(PluginUtils):
         with self.sync_render_lock:
             current_buffer: Buffer = self.nvim.current.buffer
 
-            with Database() as cursors:
+            with Database() as db:
                 buffer_name = current_buffer.name
                 if buffer_name == '':
                     return
-                switched_buffer, transposed, main_id = self.process_filepath(buffer_name, cursors, view)
+                switched_buffer, transposed, main_id = self.process_filepath(buffer_name, db, view)
                 if switched_buffer:
                     return
                 buffer_id = self.current_buffer_id()
@@ -55,7 +56,7 @@ class PluginDriver(PluginUtils):
                         while True:
                             try:
                                 buffer_lines = cast(Li, list(current_buffer))
-                                root_view = view or sync_buffer(buffer_lines, main_id, last_sync, cursors, transposed,
+                                root_view = view or sync_buffer(buffer_lines, main_id, last_sync, db, transposed,
                                                                 self.realtime_session, self.git_sync_event)
                                 break
                             except RecursionError:
@@ -73,7 +74,7 @@ class PluginDriver(PluginUtils):
                         t2 = time()
                         del2 = t2 - t1
                         self.delete_highlights(current_buffer.number)
-                        self.buffer_last_sync[buffer_id] = render(root_view, current_buffer, self.nvim, cursors,
+                        self.buffer_last_sync[buffer_id] = render(root_view, current_buffer, self.nvim, db,
                                                                   transposed, fold_level)
 
                         total = time() - t0

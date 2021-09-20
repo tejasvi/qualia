@@ -1,11 +1,10 @@
-from base64 import b64encode
 from difflib import SequenceMatcher
-from typing import Iterator, Callable, Union, cast, Optional, TYPE_CHECKING
+from typing import Iterator, Union, cast, Optional, TYPE_CHECKING
 
-from qualia.config import DEBUG, _EXPANDED_BULLET, _COLLAPSED_BULLET, NEST_LEVEL_SPACES, _SHORT_BUFFER_ID, \
-    _BUFFER_ID_STORE_BYTES
-from qualia.models import NodeId, BufferNodeId, Cursors, BufferContentSetter, Li
-from qualia.utils.common_utils import logger, get_key_val, set_key_val, get_node_descendants
+from qualia.config import DEBUG, _EXPANDED_BULLET, _COLLAPSED_BULLET, NEST_LEVEL_SPACES
+from qualia.models import NodeId, BufferContentSetter, Li
+from qualia.utils.common_utils import logger
+from qualia.database import Database
 
 if TYPE_CHECKING:
     from pynvim.api import Buffer
@@ -136,7 +135,7 @@ def different_item_idxs_from_end(list1: list, list2: list, minimum_idx: int) -> 
 
 
 def content_lines_to_buffer_lines(content_lines: Li, node_id: NodeId, level: int, expanded: bool, ordered: bool,
-                                  cursors: Cursors, transposed: bool) -> Li:
+                                  db: Database, transposed: bool) -> Li:
     if level == 0:
         buffer_lines = content_lines
     else:
@@ -145,40 +144,14 @@ def content_lines_to_buffer_lines(content_lines: Li, node_id: NodeId, level: int
         space_prefix = ' ' * space_count
         buffer_lines = cast(Li, [space_prefix[:-offset]
                                  + ('1.' if ordered else (_EXPANDED_BULLET if expanded else _COLLAPSED_BULLET)) + ' '
-                                 + buffer_node_tracker(node_id, transposed, cursors)
+                                 + buffer_node_tracker(node_id, transposed, db)
                                  + content_lines[0]])
         for idx, line in enumerate(content_lines[1:]):
             buffer_lines.append(space_prefix + line)
     return buffer_lines
 
 
-def buffer_node_tracker(node_id: NodeId, transposed: bool, cursors: Cursors) -> str:
-    has_other_ancestors = len(get_node_descendants(cursors, node_id, not transposed, True)) > 1
+def buffer_node_tracker(node_id: NodeId, transposed: bool, db: Database) -> str:
+    has_other_ancestors = len(db.get_node_descendants(node_id, not transposed, True)) > 1
     return "[](" + (('T' if has_other_ancestors else 't') if transposed else ('N' if has_other_ancestors else 'n')
-                    ) + node_to_buffer_id(node_id, cursors) + ")  "
-
-
-# misplaced cursor when concealing wide characters (from base65536)
-# Base64 stores 6 bits per letter. 000000 is represented as 'A'
-_buffer_id_encoder: Callable[[bytes], BufferNodeId] = lambda a: cast(BufferNodeId, b64encode(a).decode().rstrip(
-    "=").lstrip('A') or 'A')  # base65536.encode
-
-
-def node_to_buffer_id(node_id: NodeId, cursors: Cursors) -> BufferNodeId:
-    if not _SHORT_BUFFER_ID:
-        return cast(BufferNodeId, node_id)
-    buffer_node_id = cast(Optional[BufferNodeId], get_key_val(node_id, cursors.node_id_buffer_id, False))
-    if buffer_node_id is None:
-        if cursors.buffer_id_bytes_node_id.last():
-            last_buffer_id_bytes = cursors.buffer_id_bytes_node_id.key()
-            new_counter = int.from_bytes(last_buffer_id_bytes, 'big') + 1
-            buffer_id_bytes = new_counter.to_bytes(_BUFFER_ID_STORE_BYTES, 'big')
-        else:
-            buffer_id_bytes = (0).to_bytes(_BUFFER_ID_STORE_BYTES, 'big')
-        # base65536 doesn't output brackets https://qntm.org/safe
-        # base65536 gives single character for 16bits == 2bytes
-        buffer_node_id = _buffer_id_encoder(buffer_id_bytes)
-        logger.debug(f"{node_id} {buffer_node_id}")
-        set_key_val(node_id, buffer_node_id, cursors.node_id_buffer_id, True)
-        set_key_val(buffer_id_bytes, node_id, cursors.buffer_id_bytes_node_id, True)
-    return cast(BufferNodeId, buffer_node_id)
+                    ) + db.node_to_buffer_id(node_id) + ")  "

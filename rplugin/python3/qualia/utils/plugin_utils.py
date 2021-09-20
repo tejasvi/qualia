@@ -3,17 +3,16 @@ from os.path import basename
 from pathlib import Path
 from sys import executable
 from time import sleep
-from typing import Optional, cast, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
-from lmdb import Cursor
 from pynvim import Nvim, NvimError
 
 from qualia.config import NVIM_DEBUG_PIPE, _FZF_LINE_DELIMITER, _TRANSPOSED_FILE_PREFIX
-from qualia.config import _FILE_FOLDER, _ROOT_ID_KEY
+from qualia.config import _FILE_FOLDER
 from qualia.models import NodeId, DuplicateNodeException, UncertainNodeChildrenException, View, BufferId, LastSync, \
-    Cursors, LineInfo, KeyNotFoundError
-from qualia.utils.common_utils import get_key_val, file_name_to_node_id, logger, get_node_descendants, \
-    exception_traceback, get_node_content_lines, cursor_keys
+    LineInfo, KeyNotFoundError
+from qualia.utils.common_utils import file_name_to_node_id, logger, exception_traceback
+from qualia.database import Database
 
 if TYPE_CHECKING:
     from pynvim.api import Buffer
@@ -38,9 +37,10 @@ class PluginUtils:
         self.nvim.out_write(text + '\n')
 
     def replace_with_file(self, filepath: str, replace_buffer: bool) -> None:
-        command = f"let qualia_last_buffer=bufnr('%') |  silent! edit {filepath} | normal lh"  # wiggle closes FZF popup
+        command = f"let g:qualia_last_buffer=bufnr('%') |  silent edit {filepath} | normal lh"  # wiggle closes FZF popup
+        # silent!
         if replace_buffer:
-            command += " | bdelete qualia_last_buffer"
+            command += " | bdelete g:qualia_last_buffer"
         try:
             self.nvim.command(command)
         except NvimError as e:
@@ -53,21 +53,21 @@ class PluginUtils:
         if self.nvim.current.buffer.name != filepath:
             self.replace_with_file(filepath, replace_buffer)
 
-    def process_filepath(self, buffer_name: str, cursors: Cursors, view) -> tuple[bool, bool, NodeId]:
+    def process_filepath(self, buffer_name: str, db: Database, view) -> tuple[bool, bool, NodeId]:
         switched_buffer = False
         try:
-            main_id, transposed = self.resolve_main_id(buffer_name, cursors)
+            main_id, transposed = self.resolve_main_id(buffer_name, db)
         except ValueError:
-            main_id, transposed = self.navigate_root_node(buffer_name, cursors.metadata)
+            main_id, transposed = self.navigate_root_node(buffer_name, db)
             switched_buffer = True
         if view and main_id != view.main_id:
             self.navigate_node(view.main_id, True)
             switched_buffer = True
         return switched_buffer, transposed, main_id
 
-    def navigate_root_node(self, buffer_name: str, metadata_cursor: Cursor) -> tuple[NodeId, bool]:
+    def navigate_root_node(self, buffer_name: str, db: Database) -> tuple[NodeId, bool]:
         transposed = self.buffer_transposed(buffer_name)
-        root_id = cast(NodeId, get_key_val(_ROOT_ID_KEY, metadata_cursor, True))
+        root_id = db.get_root_id()
         self.replace_with_file(self.node_id_to_filepath(root_id, transposed), True)
         # self.print_message("Redirecting to root node")
         return root_id, transposed
@@ -146,29 +146,29 @@ class PluginUtils:
     def line_node_view(self, line_num) -> View:
         line_info = self.line_info(line_num)
         node_id = line_info.node_id
-        view = View(node_id, line_info.parent_view.sub_tree[node_id])
+        view = View(node_id, line_info.parent_view.sub_tree[node_id] if line_info.parent_view.sub_tree else {})
         return view
 
     @staticmethod
     def buffer_transposed(buffer_name: str) -> bool:
         return basename(buffer_name)[0] == _TRANSPOSED_FILE_PREFIX
 
-    @staticmethod
-    def node_id_to_filepath(node_id: NodeId, transposed) -> str:
+    # @staticmethod
+    def node_id_to_filepath(self, node_id: NodeId, transposed) -> str:
         file_name = node_id + ".q.md"
         if transposed:
             file_name = _TRANSPOSED_FILE_PREFIX + file_name
         return _FILE_FOLDER.joinpath(file_name).as_posix()
 
     @staticmethod
-    def resolve_main_id(buffer_name: str, cursors: Cursors) -> tuple[NodeId, bool]:
+    def resolve_main_id(buffer_name: str, db: Database) -> tuple[NodeId, bool]:
         file_name = basename(buffer_name)
         transposed = PluginUtils.buffer_transposed(buffer_name)
         if transposed:
             file_name = file_name[1:]
         main_id = file_name_to_node_id(file_name, '.q.md')
         try:
-            get_node_content_lines(cursors, main_id)
+            db.get_node_content_lines(main_id)
         except KeyNotFoundError:
             raise ValueError(buffer_name)
         return main_id, transposed
@@ -229,18 +229,16 @@ class PluginUtils:
                                     '--preview-window', ":wrap"]})
 
 
-def get_orphan_node_ids(cursors: Cursors) -> list[NodeId]:
-    root_id = cast(NodeId, get_key_val(_ROOT_ID_KEY, cursors.metadata, True))
+def get_orphan_node_ids(db: Database) -> list[NodeId]:
+    root_id = db.get_root_id()
     visited_node_ids = {root_id}
 
     node_stack = [root_id]
     while node_stack:
         node_id = node_stack.pop()
-        node_children_ids = get_node_descendants(cursors, node_id, False, True)
+        node_children_ids = db.get_node_descendants(node_id, False, True)
         if node_children_ids:
             node_stack.extend((child_id for child_id in node_children_ids if child_id not in visited_node_ids))
             visited_node_ids.update(node_children_ids)
-    cursors.content.first()
-    orphan_node_ids = [cast(NodeId, node_id) for node_id in cursor_keys(cursors.content) if
-                       node_id not in visited_node_ids]
+    orphan_node_ids = [node_id for node_id in db.get_node_ids() if node_id not in visited_node_ids]
     return orphan_node_ids

@@ -11,9 +11,9 @@ from typing import Iterable, TextIO, cast
 from orderedset import OrderedSet
 
 from qualia.config import GIT_SEARCH_URL, _GIT_FOLDER, GIT_BRANCH, _SORT_SIBLINGS
-from qualia.models import NodeData, NodeId, Cursors, LastSync, El, Li
-from qualia.utils.common_utils import cd_run_git_cmd, get_node_descendants, \
-    get_node_content_lines, logger, open_write_lf, decrypt_lines, encrypt_lines
+from qualia.models import NodeId, El, Li
+from qualia.utils.common_utils import cd_run_git_cmd, logger, open_write_lf, decrypt_lines, encrypt_lines
+from qualia.database import Database
 
 _BACKLINK_LINE_START = "0. [`Backlinks`]"
 _CONTENT_CHILDREN_SEPARATOR_LINES = ["<hr>", ""]
@@ -54,43 +54,17 @@ def symlinks_enabled() -> bool:
     return True
 
 
-def create_markdown_file(cursors: Cursors, node_id: NodeId, repository_encrypted: bool) -> OrderedSet[NodeId]:
-    content_lines = get_node_content_lines(cursors, node_id)
+def create_markdown_file(db: Database, node_id: NodeId, repository_encrypted: bool) -> OrderedSet[NodeId]:
+    content_lines = db.get_node_content_lines(node_id)
     markdown_file_lines = encrypt_lines(content_lines) if repository_encrypted else content_lines
     markdown_file_lines.extend(_CONTENT_CHILDREN_SEPARATOR_LINES)
-    valid_node_children_ids = get_node_descendants(cursors, node_id, False, True)
+    valid_node_children_ids = db.get_node_descendants(node_id, False, True)
     markdown_file_lines.append(f"{_BACKLINK_LINE_START}({GIT_SEARCH_URL + node_id})")
     for i, child_id in enumerate(sorted(valid_node_children_ids) if _SORT_SIBLINGS else valid_node_children_ids):
         markdown_file_lines.append(f"{i}. [`{child_id}`]({child_id}.md)")
     with open_write_lf(_GIT_FOLDER.joinpath(node_id + ".md"), False) as f:
         f.write('\n'.join(markdown_file_lines) + '\n')
     return valid_node_children_ids
-
-
-def pop_unsynced_nodes(cursors: Cursors):
-    last_sync = LastSync()
-    unsynced_children = cursors.unsynced_children
-    if unsynced_children.first():
-        while True:
-            node_id: NodeId = unsynced_children.key().decode()
-            unsynced_children.delete()
-            children_ids = get_node_descendants(cursors, node_id, False, False)
-            if cursors.content.set_key(node_id.encode()):  # Check for invalid nodeId
-                content = get_node_content_lines(cursors, node_id)
-                last_sync[node_id] = NodeData(content, children_ids)
-            if not unsynced_children.next():
-                break
-    unsynced_content = cursors.unsynced_content
-    if unsynced_content.first():
-        while True:
-            cur_node_id: NodeId = unsynced_content.key().decode()
-            unsynced_content.delete()
-            content_lines = get_node_content_lines(cursors, cur_node_id)
-            if cur_node_id not in last_sync:
-                last_sync[cur_node_id] = NodeData(content_lines, OrderedSet())
-            if not unsynced_content.next():
-                break
-    return last_sync
 
 
 def file_children_line_to_node_id(line: str) -> NodeId:

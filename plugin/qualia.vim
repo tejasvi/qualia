@@ -34,7 +34,7 @@ if !(exists('g:qualia_no_keymap') && g:qualia_no_keymap)
 
     function! qualia#set_key_map()
         if !exists('b:qualia_key_map')
-            let maplist = ['h :ElevateNode', 'j :ToggleFold', 'K :NavigateNode', 'k :HoistNode', 'l :TransposeNode', 'L :TransposeNode 1', 'p :ToggleBufferSync', '/ :call qualia#search_input_query()', '? :SearchQualia']
+            let maplist = ['h :PromoteNode', 'j :ToggleFold', 'K :NavigateNode', 'k :HoistNode', 'l :TransposeNode', 'L :TransposeNode 1', 'p :ToggleBufferSync', '/ :call qualia#search_input_query()', '? :SearchQualia']
             for i in range(1, 9)
                 call add(maplist, i.' :FoldLevel '.i)
             endfor

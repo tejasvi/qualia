@@ -166,3 +166,7 @@ class AbstractFernet:
 
     def encrypt(self, _data: bytes) -> bytes:
         return self._error()
+
+
+class InvalidNodeId:
+    pass

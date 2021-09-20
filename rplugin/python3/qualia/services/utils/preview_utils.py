@@ -4,17 +4,17 @@ from sys import argv
 from typing import Optional, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from qualia.models import NodeId, Cursors, Li
+    from qualia.models import NodeId, Li
+    from qualia.database import Database
 
 
-def get_descendant_preview_lines(node_id, cursors, transposed, separator_width, max_level):
-    # type: (NodeId, Cursors, bool, int, int) ->  Li
-    from qualia.utils.common_utils import get_node_descendants, get_node_content_lines
+def get_descendant_preview_lines(node_id, db, transposed, separator_width, max_level):
+    # type: (NodeId, Database, bool, int, int) ->  Li
     from qualia.models import Li
 
     descendant_preview_lines = []
 
-    descendant_node_ids = get_node_descendants(cursors, node_id, transposed, True)
+    descendant_node_ids = db.get_node_descendants(node_id, transposed, True)
     if descendant_node_ids:
         descendant_preview_lines.append(separator_width * ('━' if transposed else '─'))
 
@@ -23,9 +23,9 @@ def get_descendant_preview_lines(node_id, cursors, transposed, separator_width, 
         cur_descendant_node_ids, level = stack.pop()
         for descendant_id in cur_descendant_node_ids:
             indent_spaces = " " * 4 * level
-            sub_descendant_node_ids = get_node_descendants(cursors, descendant_id, transposed, True)
-            has_other_ancestors = len(get_node_descendants(cursors, descendant_id, not transposed, False)) != 0
-            descendant_content_lines = get_node_content_lines(cursors, descendant_id)
+            sub_descendant_node_ids = db.get_node_descendants(descendant_id, transposed, True)
+            has_other_ancestors = len(db.get_node_descendants(descendant_id, not transposed, False)) != 0
+            descendant_content_lines = db.get_node_content_lines(descendant_id)
 
             descendant_preview_lines.append(indent_spaces
                                             + (('▶' if transposed else '‣')
@@ -57,21 +57,21 @@ def pad_lines(lines, width, min_height):
 def preview_node(node_id, separator_width, output_height, depth):
     # type:( NodeId, int, int, int) -> Li
     from qualia.models import KeyNotFoundError, Li
-    from qualia.utils.common_utils import get_node_content_lines, Database
+    from qualia.database import Database
 
     min_content_height, min_children_height = output_height // 4, output_height // 2
     min_parents_height = output_height - min_children_height - min_content_height
 
     preview_lines = cast(Li, [])
-    with Database() as cursors:
+    with Database() as db:
         try:
             preview_lines.extend(
-                pad_lines(get_node_content_lines(cursors, node_id), separator_width, min_content_height))
+                pad_lines(db.get_node_content_lines(node_id), separator_width, min_content_height))
         except KeyNotFoundError:
             raise Exception("Requested Node ID does not exist on the database.")
         for transposed, min_height in ((False, min_children_height), (True, min_parents_height)):
             preview_lines.extend(pad_lines(
-                get_descendant_preview_lines(node_id, cursors, transposed, separator_width, depth - 1)
+                get_descendant_preview_lines(node_id, db, transposed, separator_width, depth - 1)
                 , separator_width, min_height))
     return preview_lines
 
@@ -104,3 +104,4 @@ def connect_listener() -> Optional[Connection]:
         return Client(('localhost', 1200))
     except ConnectionRefusedError as e:
         print("Could not find qualia listening on port 1200\n" + str(e))
+        return None
