@@ -48,21 +48,21 @@ def get_buffer_lines_from_view(buffer_view: View, cursors: Cursors, transposed: 
                                fold_level: Optional[int]) -> tuple[LastSync, Li]:
     last_sync = LastSync()
     buffer_lines = cast(Li, [])
-    stack: list[tuple[NodeId, View, int, int, bool]] = [(buffer_view.main_id, View(cast(NodeId, ''), {
-        buffer_view.main_id: {} if buffer_view.sub_tree is None else buffer_view.sub_tree}), -1, 0, False)]
+    stack: list[tuple[NodeId, View, int, int, bool, int]] = [(buffer_view.main_id, View(cast(NodeId, ''), {
+        buffer_view.main_id: {} if buffer_view.sub_tree is None else buffer_view.sub_tree}), -1, 0, False, 1)]
     while stack:
-        cur_node_id, parent_view, previous_indent_level, cur_nest_level, previously_ordered = stack.pop()
+        cur_node_id, parent_view, previous_indent_level, cur_nest_level, previously_ordered, parent_sibling_count = stack.pop()
 
         content_lines = get_node_content_lines(cursors, cur_node_id)
         descendant_ids = get_node_descendants(cursors, cur_node_id, transposed, True)
 
-        context = parent_view.sub_tree
+        cur_context = parent_view.sub_tree
 
         if cur_node_id not in last_sync:
             last_sync[cur_node_id] = NodeData(content_lines, OrderedSet(descendant_ids))
-        last_sync.line_info[len(buffer_lines)] = LineInfo(cur_node_id, context, parent_view.main_id, cur_nest_level)
+        last_sync.line_info[len(buffer_lines)] = LineInfo(cur_node_id, parent_view, cur_nest_level)
 
-        buffer_descendant_context = context[cur_node_id]
+        buffer_descendant_context = cur_context[cur_node_id]
 
         if fold_level is not None:
             if buffer_descendant_context is None:
@@ -75,12 +75,12 @@ def get_buffer_lines_from_view(buffer_view: View, cursors: Cursors, transposed: 
         expanded = not descendant_ids or buffer_descendant_context is not None
 
         ordered = expanded and (
-                (len(descendant_ids) == 1) or previously_ordered) and previous_indent_level >= 0 and len(
-            context) == 1
+                (len(descendant_ids) == 1) or previously_ordered) and previous_indent_level > 0 and len(
+            cur_context) == 1 and parent_sibling_count == 1
         current_indent_level = previous_indent_level if (ordered and previously_ordered) else previous_indent_level + 1
 
         if buffer_descendant_context is not None:
-            context[cur_node_id] = descendant_context = {
+            cur_context[cur_node_id] = descendant_context = {
                 descendant_id: buffer_descendant_context.get(descendant_id)
                 for descendant_id in descendant_ids}
             for descendant_node_id in sorted(descendant_ids, reverse=True) if _SORT_SIBLINGS else reversed(
@@ -88,7 +88,7 @@ def get_buffer_lines_from_view(buffer_view: View, cursors: Cursors, transposed: 
                 stack.append(
                     (
                     descendant_node_id, View(cur_node_id, descendant_context), current_indent_level, cur_nest_level + 1,
-                    ordered,))
+                    ordered, len(cur_context)))
 
         buffer_lines += content_lines_to_buffer_lines(content_lines, cur_node_id, current_indent_level, expanded,
                                                       ordered, cursors, transposed)

@@ -28,7 +28,7 @@ class ParseProcess:
         View, ProcessState]:
         if not lines:
             lines = cast(Li, [''])
-        self.buffer_to_node_id_cur = cursors.buffer_id_node_id
+        self.buffer_to_node_id_cur = cursors.buffer_id_bytes_node_id
         self._changes = ProcessState()
         self._lines = lines
 

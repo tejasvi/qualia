@@ -34,7 +34,7 @@ if !(exists('g:qualia_no_keymap') && g:qualia_no_keymap)
 
     function! qualia#set_key_map()
         if !exists('b:qualia_key_map')
-            let maplist = ['j :ToggleFold', 'K :NavigateNode', 'k :HoistNode', 'l :TransposeNode', 'L :TransposeNode 1', 'p :ToggleParser', '/ :call qualia#search_input_query()', '? :SearchQualia']
+            let maplist = ['h :ElevateNode', 'j :ToggleFold', 'K :NavigateNode', 'k :HoistNode', 'l :TransposeNode', 'L :TransposeNode 1', 'p :ToggleBufferSync', '/ :call qualia#search_input_query()', '? :SearchQualia']
             for i in range(1, 9)
                 call add(maplist, i.' :FoldLevel '.i)
             endfor
@@ -68,7 +68,8 @@ function! qualia#pretty_id()
         let w:matchAdded=1
     endif
 endfunction
-autocmd VimEnter,WinEnter,BufEnter *.q.md call qualia#pretty_id()
+
+autocmd VimEnter,WinEnter,BufEnter *.q.md call qualia#pretty_id() | call setline('.', getline('.'))
 
 function! FilterQualiaFiles()
     let new_oldfiles = []
@@ -80,4 +81,6 @@ function! FilterQualiaFiles()
     let v:oldfiles = new_oldfiles
 endfunction
 autocmd VimEnter,BufNew *.q.md call FilterQualiaFiles()
+
+autocmd BufEnter *.q.md setlocal filetype=markdown
 "ॱᐧᣟ⋅⸪⸫⸬⸭⸱ꜗꜘꜙ𑁉𑁊

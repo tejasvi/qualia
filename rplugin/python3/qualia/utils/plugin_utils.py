@@ -113,21 +113,40 @@ class PluginUtils:
     def delete_highlights(self, buffer_numer) -> None:
         self.nvim.funcs.nvim_buf_clear_namespace(buffer_numer, self.highlight_ns, 0, -1)
 
-    def line_info(self, line_num) -> LineInfo:
+    def node_ancestory_info(self, line_num: int, level_count: int) -> list[LineInfo]:
         buffer_id = self.current_buffer_id()
-        assert buffer_id is not None
+        assert buffer_id is not None and level_count > 0
         line_data = self.buffer_last_sync[buffer_id].line_info
-        if line_data is not None:
-            for line_number in range(line_num, -1, -1):
-                if line_number in line_data:
-                    return line_data[line_number]
-        raise Exception(
-            "Current line info not found " + f"{self.buffer_last_sync=} {line_data=} {line_num=} {buffer_id=}")
+
+        error_msg = f"Line info not found {self.buffer_last_sync=} {line_data=} {line_num=} {buffer_id=} {level_count}"
+        if line_data is None:
+            raise Exception(error_msg)
+
+        info_list = []
+        last_level = float("inf")
+        for line_number in range(line_num, -1, -1):
+            if line_number in line_data:
+                cur_level = line_data[line_number].nested_level
+                logger.debug(cur_level)
+                if cur_level < last_level:
+                    logger.debug("HEre")
+                    info_list.append(line_data[line_number])
+                    last_level = cur_level
+                    level_count -= 1
+                    if level_count == 0:
+                        break
+
+        assert level_count == 0, (info_list, error_msg)
+
+        return info_list
+
+    def line_info(self, line_num: int) -> LineInfo:
+        return self.node_ancestory_info(line_num, 1)[0]
 
     def line_node_view(self, line_num) -> View:
         line_info = self.line_info(line_num)
         node_id = line_info.node_id
-        view = View(node_id, line_info.context[node_id])
+        view = View(node_id, line_info.parent_view.sub_tree[node_id])
         return view
 
     @staticmethod
@@ -217,7 +236,7 @@ def get_orphan_node_ids(cursors: Cursors) -> list[NodeId]:
     node_stack = [root_id]
     while node_stack:
         node_id = node_stack.pop()
-        node_children_ids = get_node_descendants(cursors, node_id, False, False)
+        node_children_ids = get_node_descendants(cursors, node_id, False, True)
         if node_children_ids:
             node_stack.extend((child_id for child_id in node_children_ids if child_id not in visited_node_ids))
             visited_node_ids.update(node_children_ids)

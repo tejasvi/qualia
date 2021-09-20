@@ -56,8 +56,7 @@ class UncertainNodeChildrenException(Exception):
 @dataclass
 class LineInfo:
     node_id: NodeId
-    context: Tree
-    ancester_node_id: NodeId
+    parent_view: View
     nested_level: int
 
 
@@ -113,7 +112,7 @@ class Cursors:
     unsynced_children: Cursor
     unsynced_views: Cursor
 
-    buffer_id_node_id: Cursor
+    buffer_id_bytes_node_id: Cursor
     node_id_buffer_id: Cursor
 
     metadata: Cursor

@@ -41,7 +41,7 @@ class Database:
     Relevant? > Repeat Environment.open_db() calls for the same name will return the same handle.
     """
     _db_names = (
-        "content", "children", "views", "unsynced_content", "unsynced_children", "unsynced_views", "buffer_id_node_id",
+        "content", "children", "views", "unsynced_content", "unsynced_children", "unsynced_views", "buffer_id_bytes_node_id",
         "node_id_buffer_id", "metadata", "bloom_filters", "parents", "transposed_views")
     _env: Environment = None
     _env_open_lock = Lock()
@@ -51,7 +51,7 @@ class Database:
         if Database._env is None:  # Reduce lock contention (rarely an issue)
             with Database._env_open_lock:  # Thread critical section
                 if Database._env is None:
-                    Database._env = lmdb.open(_DB_FOLDER.as_posix(), max_dbs=len(Database._db_names), map_size=2 ** 20)
+                    Database._env = lmdb.open(_DB_FOLDER.as_posix(), max_dbs=len(Database._db_names), map_size=1e9)
 
     def __enter__(self) -> Cursors:
         self.txn = self._env.begin(write=True)
@@ -215,7 +215,7 @@ def _add_remove_ancestor(add_or_remove: bool, ancestor_id: NodeId, descendant_id
 
 def set_node_descendants(node_id: NodeId, descendant_ids: OrderedSet[NodeId], cursors: Cursors, transposed: bool):
     # Order important. (get then set)
-    previous_node_descendants = get_node_descendants(cursors, node_id, transposed, False)
+    previous_node_descendants = get_node_descendants(cursors, node_id, transposed, True)
 
     _add_remove_ancestor(True, node_id, descendant_ids.difference(previous_node_descendants), cursors, transposed)
     _add_remove_ancestor(False, node_id, previous_node_descendants.difference(descendant_ids), cursors, transposed)
@@ -285,7 +285,7 @@ def children_hash(key: NodeId, cursors: Cursors) -> str:
 def trigger_buffer_change(nvim):
     # type:(Nvim) -> None
     nvim.async_call(nvim.command,
-                    'execute (expand("%:p")[-5:] ==? ".q.md" && mode() !=# "t") ? "normal VyVp" : ""',
+                    """execute (expand("%:p")[-5:] ==? ".q.md" && mode() !=# "t") ? "setline('.', getline('.'))" : "" """,
                     async_=True)
 
 

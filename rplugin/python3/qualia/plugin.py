@@ -2,6 +2,7 @@ from logging import getLogger
 from time import sleep
 from typing import Optional
 
+from orderedset._orderedset import OrderedSet
 from pynvim import plugin, Nvim, autocmd, command, attach, function
 
 from qualia.config import _FZF_LINE_DELIMITER, NVIM_DEBUG_PIPE
@@ -10,7 +11,7 @@ from qualia.models import NodeId
 from qualia.services.search import matching_nodes_content, fzf_input_line
 from qualia.utils.bootstrap_utils import bootstrap
 from qualia.utils.common_utils import Database, exception_traceback, normalized_search_prefixes, save_root_view, \
-    get_node_content_lines, delete_node, logger, _set_node_descendants_value, get_node_descendants, set_node_descendants
+    get_node_content_lines, delete_node, logger, get_node_descendants, set_node_descendants
 from qualia.utils.plugin_utils import get_orphan_node_ids, PluginUtils
 
 
@@ -49,29 +50,41 @@ class Qualia(PluginDriver):
             save_root_view(view, cursors.views)
         self.navigate_node(view.main_id, True)
 
-    @command("ToggleParser", sync=True)
+    @command("ToggleBufferSync", sync=True)
     def toggle_parser(self) -> None:
         self.enabled = not self.enabled
         if self.enabled:
             self.trigger_sync(True)
+        self.print_message("Buffer sync paused" if self.enabled else "Buffer sync enabled")
 
-    @command("MoveUp", sync=True) # TODO: Range
-    def move_up(self):
+    @command("ElevateNode", sync=True)  # TODO: Range
+    def move_up(self) -> None:
         current_line_number = self.current_line_number()
-        cur_line_info = self.line_info(current_line_number)
-        if cur_line_info.nested_level < 2:
+        try:
+            ancestory = self.node_ancestory_info(current_line_number, 2)
+        except Exception as e:
+            self.print_message("Can't move further up.")
+            logger.debug(exception_traceback(e))
             return
-        cur_node_id = cur_line_info.node_id
-        cur_ancestor_node_id = cur_line_info.ancester_node_id
+
+        cur_line_info = ancestory[0]
+        parent_line_info = ancestory[1]
+
         transposed = self.buffer_transposed(self.nvim.current.buffer.name)
+        cur_node_id = cur_line_info.node_id
+        parent_id = cur_line_info.parent_view.main_id
+        grandparent_id = parent_line_info.parent_view.main_id
+
         with Database() as cursors:
-            cur_node_siblings = get_node_descendants(cursors, cur_ancestor_node_id, transposed, False)
-            cur_node_siblings.remove(cur_line_info)
-            set_node_descendants(cur_ancestor_node_id,cur_node_siblings, cursors,  transposed)
+            cur_node_siblings = get_node_descendants(cursors, parent_id, transposed, False)
+            cur_node_siblings.remove(cur_node_id)
+            set_node_descendants(parent_id, cur_node_siblings, cursors, transposed)
 
+            parent_node_siblings_list = list(get_node_descendants(cursors, grandparent_id, transposed, False))
+            parent_node_siblings_list.insert(parent_node_siblings_list.index(parent_id) + 1, cur_node_id)
+            set_node_descendants(grandparent_id, OrderedSet(parent_node_siblings_list), cursors, transposed)
 
-        self.line_node_view(current_line_number)
-
+        self.trigger_sync(True)
 
     @command("ToggleFold", sync=True, nargs='?')
     def toggle_fold(self, args: list[int] = None) -> None:
@@ -80,7 +93,7 @@ class Qualia(PluginDriver):
         if cur_line_info is self.line_info(0):
             self.print_message("Can't toggle top level node")
         else:
-            cur_context = cur_line_info.context
+            cur_context = cur_line_info.parent_view.sub_tree
             cur_node_id = cur_line_info.node_id
             currently_expanded = cur_context[cur_node_id] is not None
 

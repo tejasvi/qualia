@@ -29,7 +29,7 @@ def main() -> None:
             conn.send(close_connection_request)
             return
 
-    # Import only if no listener running for <10ms response time
+    # Import only if no listener running (used as external tool)
 
     from qualia.services.utils.preview_utils import preview_node
     from typing import cast

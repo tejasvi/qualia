@@ -1,8 +1,6 @@
 from multiprocessing.connection import Connection, Client
 from os import environ
-from random import Random
 from sys import argv
-from time import time
 from typing import Optional, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -85,7 +83,8 @@ class InvalidParameters(Exception):
 def parse_args() -> tuple[bool, str, int, int]:
     try:
         node_id_arg = argv[1]
-        # UUID(node_id_arg) # shave 20ms
+        # from uuid import UUID
+        # UUID(node_id_arg) # skip to shave 20ms
     except (IndexError, ValueError) as e:
         print(f"Improper usage. Pass Node ID as single argument (UUID hex format). Recieved argument list: {argv[1:]}"
               + str(e))
