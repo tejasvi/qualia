@@ -9,6 +9,7 @@ from ntplib import NTPClient, NTPException
 from orderedset import OrderedSet
 
 from qualia.config import ENCRYPT_REALTIME
+from qualia.database import Database
 from qualia.models import RealtimeBroadcastPacket, NodeId, RealtimeContent, RealtimeStringifiedData, \
     RealtimeStringifiedContent, RealtimeStringifiedChildren, StringifiedChildren, \
     StringifiedContent, El, Li, RealtimeChildren
@@ -16,7 +17,6 @@ from qualia.services.utils.service_utils import content_hash
 from qualia.utils.common_utils import conflict, logger, \
     ordered_data_hash, StartLoggedThread, exception_traceback, decrypt_lines, encrypt_lines, \
     children_data_hash, absent_node_content_lines
-from qualia.database import Database
 
 if TYPE_CHECKING:
     from firebase_admin.db import Reference, Event as FirebaseEvent

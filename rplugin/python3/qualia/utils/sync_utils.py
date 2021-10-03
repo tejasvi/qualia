@@ -2,11 +2,11 @@ from typing import Optional
 
 from orderedset import OrderedSet
 
+from qualia.database import Database
 from qualia.models import View, ProcessState, LastSync, RealtimeBroadcastPacket, NodeId, RealtimeChildren, Li, \
     RealtimeContent, KeyNotFoundError
 from qualia.utils.common_utils import ordered_data_hash, conflict, children_data_hash, \
     absent_node_content_lines
-from qualia.database import Database
 
 
 def sync_with_db(root_view: Optional[View], changes: ProcessState, last_sync: LastSync, db: Database,

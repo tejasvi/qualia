@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from base64 import b64decode
 from functools import cache
-from math import ceil
 from re import compile
 from typing import cast, Optional, TYPE_CHECKING, Callable, Sequence
+from uuid import UUID
 
-from qualia.config import _COLLAPSED_BULLET, _TO_EXPAND_BULLET, _SHORT_BUFFER_ID, _BUFFER_ID_STORE_BYTES
+from qualia.config import _COLLAPSED_BULLET, _TO_EXPAND_BULLET, _SHORT_BUFFER_ID
+from qualia.database import Database
 from qualia.models import NODE_ID_ATTR, Tree, NodeId, BufferNodeId, DuplicateNodeException, LastSync, \
     UncertainNodeChildrenException, AstMap, Li
-from qualia.utils.common_utils import get_time_uuid
-from qualia.database import Database
+from qualia.utils.common_utils import get_time_uuid, buffer_id_decoder, removeprefix
 
 if TYPE_CHECKING:
     from markdown_it.tree import SyntaxTreeNode
@@ -32,16 +31,10 @@ def get_md_ast(content_lines: Li) -> SyntaxTreeNode:
     return root_ast
 
 
-# Base64 stores 6 bits per letter. 000000 is represented as 'A'
-_buffer_id_decoder: Callable[[BufferNodeId], bytes] = lambda a: b64decode(
-    a.rjust(ceil(_BUFFER_ID_STORE_BYTES * 8 / 6), 'A') + "==")  # base65536.decode
-
-
 def buffer_to_node_id(buffer_id: BufferNodeId, db: Database) -> NodeId:
-    if not _SHORT_BUFFER_ID:
-        return cast(NodeId, buffer_id)
-    buffer_id_bytes = _buffer_id_decoder(buffer_id)
-    return db.buffer_id_bytes_to_node_id(buffer_id_bytes)
+    buffer_id_bytes = buffer_id_decoder(buffer_id)
+    node_id = db.buffer_id_bytes_to_node_id(buffer_id_bytes)
+    return node_id
 
 
 def get_id_line(line: str, db: Database) -> tuple[NodeId, str]:
@@ -50,7 +43,11 @@ def get_id_line(line: str, db: Database) -> tuple[NodeId, str]:
     if id_match:
         line = removeprefix(line, id_match.group(0))
         buffer_node_id = BufferNodeId(id_match.group(1))
-        node_id = buffer_to_node_id(buffer_node_id, db)
+        if _SHORT_BUFFER_ID:
+            node_id = buffer_to_node_id(buffer_node_id, db)
+        else:
+            UUID(buffer_node_id)
+            node_id = cast(NodeId, buffer_node_id)
     else:
         node_id = get_time_uuid()
     return node_id, line
@@ -194,10 +191,3 @@ def preserve_expand_consider_sub_tree(list_item_ast: SyntaxTreeNode, node_id: No
     # expand = bullet == _TO_EXPAND_BULLET or (bullet != _COLLAPSED_BULLET and sub_list_tree)  # Why?
 
     return expand, consider_sub_tree
-
-
-def removeprefix(input_string: str, suffix: str) -> str:
-    # in 3.9 str.removeprefix
-    if suffix and input_string.startswith(suffix):
-        return input_string[len(suffix):]
-    return input_string

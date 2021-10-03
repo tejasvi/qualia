@@ -2,25 +2,25 @@ from threading import Event, current_thread
 from time import sleep
 from typing import Callable, Optional
 
+from qualia.database import Database
 from qualia.models import NodeId, KeyNotFoundError
 from qualia.utils.common_utils import StartLoggedThread, logger, exception_traceback, ordered_data_hash
-from qualia.database import Database
 
 
-def get_trigger_event(callback: Callable, throttle_seconds: float) -> Event:
+def get_task_firing_event(task: Callable, throttle_seconds: float) -> Event:
     service_event = Event()
 
     def event_watcher() -> None:
         from inspect import getsource
         try:
-            current_thread().setName(getsource(callback).split('lambda', 1)[-1].strip()
-                                     if callback.__name__ == '<lambda>' else callback.__name__)
+            current_thread().setName(getsource(task).split('lambda', 1)[-1].strip()
+                                     if task.__name__ == '<lambda>' else task.__name__)
         except Exception as e:
-            logger.debug("Could set name of trigger event thread" + exception_traceback(e))
+            logger.debug("Could set name of task event thread" + exception_traceback(e))
         while True:
             service_event.wait()
             service_event.clear()
-            callback()
+            task()
             sleep(throttle_seconds)
 
     StartLoggedThread(event_watcher, "")

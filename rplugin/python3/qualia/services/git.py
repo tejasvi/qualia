@@ -3,18 +3,19 @@ from __future__ import annotations
 from glob import glob
 from pathlib import Path
 from sys import path, argv
+from uuid import UUID
 
 from orderedset import OrderedSet
 
 path.append(Path(__file__).parent.parent.as_posix())  # noqa: E402
 
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, cast
 
 from qualia.config import GIT_BRANCH, GIT_AUTHORIZED_REMOTE, _GIT_FOLDER, \
     _GIT_ENCRYPTION_ENABLED_FILE_NAME
-from qualia.models import CustomCalledProcessError, GitChangedNodes, GitMergeError, KeyNotFoundError
+from qualia.models import CustomCalledProcessError, GitChangedNodes, GitMergeError, KeyNotFoundError, NodeId
 from qualia.utils.bootstrap_utils import repository_setup, bootstrap
-from qualia.utils.common_utils import cd_run_git_cmd, file_name_to_node_id, logger, \
+from qualia.utils.common_utils import cd_run_git_cmd, file_name_to_file_id, logger, \
     exception_traceback, conflict, trigger_buffer_change
 from qualia.database import Database
 from qualia.services.utils.git_utils import create_markdown_file, repository_file_to_content_children, \
@@ -97,7 +98,9 @@ def directory_to_db(db: Database, changed_file_names: list[str], repository_encr
         absolute_file_path = _GIT_FOLDER.joinpath(file_name)
         if absolute_file_path.exists() and len(relative_file_path.parts) == 1 and absolute_file_path.is_file():
             try:
-                node_id = file_name_to_node_id(relative_file_path.name, ".md")
+                file_id = file_name_to_file_id(relative_file_path.name, ".md")
+                UUID(file_id)
+                node_id = cast(NodeId, file_id)
             except ValueError:
                 logger.critical("Invalid ", relative_file_path)
             else:

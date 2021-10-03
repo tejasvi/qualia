@@ -78,7 +78,7 @@ if not OVERRIDE_ADVANCED_SETTINGS:
     _LOG_FILENAME = _LOG_FOLDER.joinpath('logs.txt')
 
     # Before starting resets data in QUALIA_DATA_DIR (DEBUG adds '_debug' to the path by default)
-    _RESET_APP_FOLDER = True
+    _RESET_APP_FOLDER = False
 
     for _path in (_FILE_FOLDER, _GIT_FOLDER, _DB_FOLDER, _LOG_FOLDER):
         if _RESET_APP_FOLDER:
@@ -105,4 +105,4 @@ if not OVERRIDE_ADVANCED_SETTINGS:
     _GIT_ENCRYPTION_ENABLED_FILE_NAME = '.encryption_enabled'
     _GIT_ENCRYPTION_DISABLED_FILE_NAME = '.encryption_disabled'
 _PREVIEW_NEST_LEVEL = 1
-_BUFFER_ID_STORE_BYTES = 6
+_SHORT_ID_STORE_BYTES = 6

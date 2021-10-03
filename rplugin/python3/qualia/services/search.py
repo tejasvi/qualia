@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Iterable, cast
 
 from qualia.config import _FZF_LINE_DELIMITER
-from qualia.models import NodeId
 from qualia.database import Database
+from qualia.models import NodeId
 
 
 def matching_nodes_content(search_keywords: Iterable[str]) -> list[str]:

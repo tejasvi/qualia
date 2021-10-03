@@ -7,13 +7,14 @@ from time import sleep, time
 from typing import TYPE_CHECKING, Callable, cast
 
 from qualia.config import FIREBASE_WEB_APP_CONFIG
-from qualia.models import RealtimeBroadcastPacket, RealtimeDbIndexDisabledError, RealtimeStringifiedChildren, RealtimeStringifiedContent, RealtimeContent, NodeId, Li
-from qualia.services.utils.service_utils import get_trigger_event
+from qualia.database import Database
+from qualia.models import RealtimeBroadcastPacket, RealtimeDbIndexDisabledError, RealtimeStringifiedChildren, \
+    RealtimeStringifiedContent, RealtimeContent, NodeId, Li
 from qualia.services.utils.realtime_utils import process_children_broadcast, process_content_broadcast, CHILDREN_KEY, \
     CONTENT_KEY, RealtimeUtils, network_errors, tuplify_values
+from qualia.services.utils.service_utils import get_task_firing_event
 from qualia.utils.bootstrap_utils import bootstrap
 from qualia.utils.common_utils import logger, exception_traceback, StartLoggedThread
-from qualia.database import Database
 
 if TYPE_CHECKING:
     from firebase_admin.db import Event as FirebaseEvent
@@ -27,7 +28,7 @@ class Realtime(RealtimeUtils):
         self.broadcast_conflicts_queue: Queue[RealtimeBroadcastPacket] = Queue()
 
         self.last_broadcast_recieve_time = float('-inf')
-        self.unsynced_changes_event = get_trigger_event(buffer_sync_trigger, 0)
+        self.unsynced_changes_event = get_task_firing_event(buffer_sync_trigger, 0)
         StartLoggedThread(target=self.initialize, name="InitRealtime")
         StartLoggedThread(target=self.watch_send_bulk_broadcast_conflicts, name="ConflictWatcher")
 
@@ -154,9 +155,11 @@ class Realtime(RealtimeUtils):
             except Empty:
                 break
             if CONTENT_KEY in next_conflict:
-                first_conflict.setdefault(CONTENT_KEY, cast(dict[NodeId, tuple[str, Li]], {})).update(next_conflict[CONTENT_KEY])
+                first_conflict.setdefault(CONTENT_KEY, cast(dict[NodeId, tuple[str, Li]], {})).update(
+                    next_conflict[CONTENT_KEY])
             if CHILDREN_KEY in next_conflict:
-                first_conflict.setdefault(CHILDREN_KEY, cast(dict[NodeId, tuple[str, list[NodeId]]], {})).update(next_conflict[CHILDREN_KEY])
+                first_conflict.setdefault(CHILDREN_KEY, cast(dict[NodeId, tuple[str, list[NodeId]]], {})).update(
+                    next_conflict[CHILDREN_KEY])
 
 
 if __name__ == "__main__" and argv[-1].endswith("realtime.py"):

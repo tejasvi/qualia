@@ -9,29 +9,7 @@ from qualia.config import _DB_FOLDER
 from qualia.models import JSONType, KeyNotFoundError, Cursors, NodeId
 
 
-def _get_key_val(key: Union[str, bytes], cursor: Cursor, must_exist: bool) -> JSONType:
-    value_bytes = cursor.get(key if isinstance(key, bytes) else key.encode())
-    if must_exist and value_bytes is None:
-        raise KeyNotFoundError(key)
-    return None if value_bytes is None else loads(value_bytes.decode())
-
-
-def _set_key_val(key: Union[str, bytes], val: JSONType, cursor: Cursor, overwrite: bool) -> None:
-    cursor.put(key if isinstance(key, bytes) else key.encode(), dumps(val).encode(), overwrite=overwrite)
-
-
-def _pop_if_exists(cursor: Cursor, key: str) -> bool:
-    if cursor.set_key(key.encode()):
-        return cursor.delete()
-    return False
-
-
-def _cursor_keys(cursor: Cursor) -> list[str]:
-    cursor.first()
-    return [key_bytes.decode() for key_bytes in cursor.iternext(values=False)]
-
-
-class _LMDB:
+class LMDB:
     """
     For some reason environment cannot be nested. E.g. if nesting in set_bloom_filter(), the db is empty on next run.
     Relevant? "Repeat Environment.open_db() calls for the same name will return the same handle."
@@ -51,7 +29,7 @@ class _LMDB:
                     self._env = lmdb.open(_DB_FOLDER.as_posix(), max_dbs=len(self._db_names), map_size=1e9)
 
     def __enter__(self):
-        # type:(_LMDB) -> _LMDB
+        # type:(LMDB) -> LMDB
         self._txn = self._env.begin(write=True)
         self._cursors = Cursors(**{db_name: self._sub_db(db_name) for db_name in self._db_names})
         return self
@@ -70,3 +48,25 @@ class _LMDB:
                        cursors.bloom_filters):
             if cursor.set_key(node_id.encode()):
                 cursor.delete()
+
+    @staticmethod
+    def _get_key_val(key: Union[str, bytes], cursor: Cursor, must_exist: bool) -> JSONType:
+        value_bytes = cursor.get(key if isinstance(key, bytes) else key.encode())
+        if must_exist and value_bytes is None:
+            raise KeyNotFoundError(key)
+        return None if value_bytes is None else loads(value_bytes.decode())
+
+    @staticmethod
+    def _set_key_val(key: Union[str, bytes], val: JSONType, cursor: Cursor, overwrite: bool) -> None:
+        cursor.put(key if isinstance(key, bytes) else key.encode(), dumps(val).encode(), overwrite=overwrite)
+
+    @staticmethod
+    def _pop_if_exists(cursor: Cursor, key: str) -> bool:
+        if cursor.set_key(key.encode()):
+            return cursor.delete()
+        return False
+
+    @staticmethod
+    def _cursor_keys(cursor: Cursor) -> list[str]:
+        cursor.first()
+        return [key_bytes.decode() for key_bytes in cursor.iternext(values=False)]

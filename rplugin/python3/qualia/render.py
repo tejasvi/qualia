@@ -4,11 +4,11 @@ from typing import Optional, cast, TYPE_CHECKING
 
 from orderedset import OrderedSet
 
-from qualia.sync import ParseProcess
 from qualia.config import DEBUG, _SORT_SIBLINGS
-from qualia.models import NodeId, View, NodeData, LastSync, LineInfo, Li, InvalidNodeId
-from qualia.utils.common_utils import logger
 from qualia.database import Database
+from qualia.models import NodeId, View, NodeData, LastSync, LineInfo, Li, InvalidNodeId
+from qualia.sync import ParseProcess
+from qualia.utils.common_utils import logger
 from qualia.utils.render_utils import render_buffer, content_lines_to_buffer_lines
 
 if TYPE_CHECKING:

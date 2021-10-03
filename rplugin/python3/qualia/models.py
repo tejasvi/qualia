@@ -11,10 +11,11 @@ from typing_extensions import TypedDict
 
 from qualia.config import _ENCRYPTION_USED
 
-NodeId = NewType("NodeId", str)
 StringifiedChildren = NewType("StringifiedChildren", str)
 StringifiedContent = NewType("StringifiedContent", str)
+NodeId = NewType("NodeId", str)
 BufferId = Tuple[int, str]
+BufferFileId = NewType("BufferFileId", str)
 BufferNodeId = NewType("BufferNodeId", str)
 Tree = Dict[NodeId, Optional[dict]]
 LineRange = Tuple[int, int]

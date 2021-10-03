@@ -1,17 +1,17 @@
 from logging import getLogger
-from time import sleep
+from time import sleep, time
 from typing import Optional
 
 from orderedset import OrderedSet
-from pynvim import plugin, Nvim, autocmd, command, attach, function
+from pynvim import plugin, Nvim, command, attach, function
 
 from qualia.config import _FZF_LINE_DELIMITER, NVIM_DEBUG_PIPE
+from qualia.database import Database
 from qualia.driver import PluginDriver
 from qualia.models import NodeId
 from qualia.services.search import matching_nodes_content, fzf_input_line
 from qualia.utils.bootstrap_utils import bootstrap
 from qualia.utils.common_utils import exception_traceback, normalized_search_prefixes, logger
-from qualia.database import Database
 from qualia.utils.plugin_utils import get_orphan_node_ids, PluginUtils
 
 
@@ -25,30 +25,24 @@ class Qualia(PluginDriver):
             logger.critical("Error during initialization" + exception_traceback(e))
             raise e
 
-    @autocmd("TextChanged,FocusGained,BufEnter,InsertLeave,BufLeave,BufFilePost,BufAdd,CursorHold", pattern='*.q.md',
-             sync=True, allow_nested=False, eval=None)
-    def trigger_sync(self, *args) -> None:
-        logger.critical("Trigger")
-        if self.ide_debugging or not self.should_continue(True if args and int(args[0]) else False):
-            return
-        try:
-            self.main(None, None)
-        except Exception as e:
-            self.nvim.err_write(
-                "\nSomething went wrong :(\n\n" + exception_traceback(e))
+    @command("TriggerSync", sync=True, nargs='?')
+    def trigger_sync_cmd(self, args: list = None) -> None:
+        self.print_message("Trigger", time())
+        self.trigger_sync(True if args and int(args[0]) else False)
 
     @command("NavigateNode", sync=True, nargs='?')
     def navigate_cur_node(self, args: list[NodeId] = None) -> None:
         node_id = (args and args[0]) or self.line_info(self.current_line_number()).node_id
-        self.navigate_node(node_id, False)
+        with Database() as db:
+            self.navigate_node(node_id, False, db)
 
     @command("HoistNode", sync=True)
     def hoist_node(self) -> None:
         line_num = self.current_line_number()
         view = self.line_node_view(line_num)
         with Database() as db:
-            db.set_node_view(view, self.buffer_transposed(self.nvim.current.buffer.name))
-        self.navigate_node(view.main_id, True)
+            db.set_node_view(view, self.file_name_transposed(self.nvim.current.buffer.name))
+            self.navigate_node(view.main_id, True, db)
 
     @command("ToggleBufferSync", sync=True)
     def toggle_parser(self) -> None:
@@ -71,7 +65,7 @@ class Qualia(PluginDriver):
 
         parent_line_info = ancestory[1]
 
-        transposed = self.buffer_transposed(self.nvim.current.buffer.name)
+        transposed = self.file_name_transposed(self.nvim.current.buffer.name)
         cur_node_id = cur_line_info.node_id
         parent_id = cur_line_info.parent_view.main_id
         grandparent_id = parent_line_info.parent_view.main_id
@@ -120,7 +114,7 @@ class Qualia(PluginDriver):
 
     @command("TransposeNode", sync=True, nargs='?')
     def transpose(self, args: list[str] = None) -> None:
-        currently_transposed = self.buffer_transposed(self.nvim.current.buffer.name)
+        currently_transposed = self.file_name_transposed(self.nvim.current.buffer.name)
         node_id = self.line_info(self.current_line_number()).node_id
         try:
             replace_buffer = False if args and int(args[0]) else True
@@ -128,7 +122,8 @@ class Qualia(PluginDriver):
             self.print_message(
                 "Optional argument to specify buffer replacement should be 1 or 0. Provided argument list: ", args)
         else:
-            self.replace_with_file(self.node_id_to_filepath(node_id, not currently_transposed), replace_buffer)
+            with Database() as db:
+                self.replace_with_file(self.node_id_filepath(node_id, not currently_transposed, db), replace_buffer)
 
     @command(PluginUtils.fzf_sink_command, nargs=1, sync=True)
     def fzf_sink(self, selections: list[str]):
@@ -136,7 +131,8 @@ class Qualia(PluginDriver):
             # FZF adds confusing backslash before delimiter, so idx - 1
             # `017b99da-b1b5-19e9-e98d-8584cf46cfcf\^Ilaskdjf`
             node_id = NodeId(selected[:selected.index(_FZF_LINE_DELIMITER) - 1])
-            node_filepath = self.node_id_to_filepath(node_id, False)
+            with Database() as db:
+                node_filepath = self.node_id_filepath(node_id, False, db)
             if i == 0:
                 self.replace_with_file(node_filepath, False)
             else:

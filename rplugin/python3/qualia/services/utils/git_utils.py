@@ -11,9 +11,9 @@ from typing import Iterable, TextIO, cast
 from orderedset import OrderedSet
 
 from qualia.config import GIT_SEARCH_URL, _GIT_FOLDER, GIT_BRANCH, _SORT_SIBLINGS
+from qualia.database import Database
 from qualia.models import NodeId, El, Li
 from qualia.utils.common_utils import cd_run_git_cmd, logger, open_write_lf, decrypt_lines, encrypt_lines
-from qualia.database import Database
 
 _BACKLINK_LINE_START = "0. [`Backlinks`]"
 _CONTENT_CHILDREN_SEPARATOR_LINES = ["<hr>", ""]

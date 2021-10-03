@@ -6,12 +6,12 @@ from orderedset import OrderedSet
 from qualia.config import GIT_BRANCH, GIT_AUTHORIZED_REMOTE, _GIT_FOLDER, ENCRYPT_DB, \
     ENCRYPT_NEW_GIT_REPOSITORY, _GIT_ENCRYPTION_ENABLED_FILE_NAME, \
     _GIT_ENCRYPTION_DISABLED_FILE_NAME
+from qualia.database import Database
 from qualia.models import DbClient, CustomCalledProcessError, NodeId, Li, KeyNotFoundError
 from qualia.services.backup import backup_db
 from qualia.services.listener import RpcListenExternal
 from qualia.utils.common_utils import cd_run_git_cmd, exception_traceback, StartLoggedThread, open_write_lf
 from qualia.utils.common_utils import logger
-from qualia.database import Database
 
 
 def ensure_root_node(db: Database) -> None:

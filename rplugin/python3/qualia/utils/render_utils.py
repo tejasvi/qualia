@@ -1,10 +1,10 @@
 from difflib import SequenceMatcher
 from typing import Iterator, Union, cast, Optional, TYPE_CHECKING
 
-from qualia.config import DEBUG, _EXPANDED_BULLET, _COLLAPSED_BULLET, NEST_LEVEL_SPACES
+from qualia.config import DEBUG, _EXPANDED_BULLET, _COLLAPSED_BULLET, NEST_LEVEL_SPACES, _SHORT_BUFFER_ID
+from qualia.database import Database
 from qualia.models import NodeId, BufferContentSetter, Li
 from qualia.utils.common_utils import logger
-from qualia.database import Database
 
 if TYPE_CHECKING:
     from pynvim.api import Buffer
@@ -38,12 +38,12 @@ def render_buffer(buffer, new_content_lines, nvim):
     # Pre-Check common state with == (100x faster than loop)
     if old_content_lines != new_content_lines:
         line_conflict = True
-        first_diff_line_num = -1
-        for first_diff_line_num, (old_line, new_line) in enumerate(zip(old_content_lines, new_content_lines)):
+        first_mismatch_line_num = -1
+        for first_mismatch_line_num, (old_line, new_line) in enumerate(zip(old_content_lines, new_content_lines)):
             if old_line != new_line:
                 break
         else:
-            first_diff_line_num += 1
+            first_mismatch_line_num += 1
             line_conflict = False
 
         undojoin = batch_undo(nvim)
@@ -55,33 +55,35 @@ def render_buffer(buffer, new_content_lines, nvim):
         line_old_end: Optional[int]
 
         if line_conflict:
-            line_new_end, line_old_end = different_item_idxs_from_end(new_content_lines, old_content_lines,
-                                                                      first_diff_line_num)
+            line_new_end, line_old_end = item_mismatch_idxs_from_end(new_content_lines, old_content_lines,
+                                                                     first_mismatch_line_num)
         else:
             line_new_end, line_old_end = None, None
 
-        if line_conflict and first_diff_line_num in (line_old_end, line_new_end):
-            if first_diff_line_num == line_old_end:
+        if line_conflict and first_mismatch_line_num in (line_old_end, line_new_end):
+            if first_mismatch_line_num == line_old_end:
                 assert line_new_end is not None
-                set_buffer_line(first_diff_line_num, new_content_lines[first_diff_line_num])
-                buffer[first_diff_line_num + 1:first_diff_line_num + 1] = new_content_lines[
-                                                                          first_diff_line_num + 1:line_new_end + 1]
+                set_buffer_line(first_mismatch_line_num, new_content_lines[first_mismatch_line_num])
+                buffer[first_mismatch_line_num + 1:first_mismatch_line_num + 1] = new_content_lines[
+                                                                                  first_mismatch_line_num + 1:line_new_end + 1]
             else:
                 assert line_old_end is not None
-                set_buffer_line(first_diff_line_num, new_content_lines[first_diff_line_num])
-                del buffer[first_diff_line_num + 1:line_old_end + 1]
+                set_buffer_line(first_mismatch_line_num, new_content_lines[first_mismatch_line_num])
+                del buffer[first_mismatch_line_num + 1:line_old_end + 1]
         else:
-            if (len(old_content_lines) - first_diff_line_num) * (len(new_content_lines) - first_diff_line_num) > 1e5:
-                buffer[first_diff_line_num:] = new_content_lines[first_diff_line_num:]
+            if (len(old_content_lines) - first_mismatch_line_num) * (
+                    len(new_content_lines) - first_mismatch_line_num) > 1e5:
+                buffer[first_mismatch_line_num:] = new_content_lines[first_mismatch_line_num:]
             else:
                 logger.debug("Surgical")
                 surgical_render(buffer, new_content_lines, set_buffer_line, old_content_lines, undojoin)
     if DEBUG:
         try:
             assert new_content_lines == list(buffer)
-        except AssertionError:
-            buffer[:] = old_content_lines
-            render_buffer(buffer, new_content_lines, nvim)
+        except AssertionError as e:
+            raise e
+            # buffer[:] = old_content_lines
+            # render_buffer(buffer, new_content_lines, nvim)
     return old_content_lines
 
 
@@ -116,7 +118,7 @@ def surgical_render(buffer, new_content_lines, replace_buffer_line, old_content_
             offset -= old_i2 - old_i1
 
 
-def different_item_idxs_from_end(list1: list, list2: list, minimum_idx: int) -> tuple[int, int]:
+def item_mismatch_idxs_from_end(list1: list, list2: list, minimum_idx: int) -> tuple[int, int]:
     len1 = len(list1)
     len2 = len(list2)
     maximum_idx_rev = min(len1 - minimum_idx, len2 - minimum_idx) - 1
@@ -154,4 +156,4 @@ def content_lines_to_buffer_lines(content_lines: Li, node_id: NodeId, level: int
 def buffer_node_tracker(node_id: NodeId, transposed: bool, db: Database) -> str:
     has_other_ancestors = len(db.get_node_descendants(node_id, not transposed, True)) > 1
     return "[](" + (('T' if has_other_ancestors else 't') if transposed else ('N' if has_other_ancestors else 'n')
-                    ) + db.node_to_buffer_id(node_id) + ")  "
+                    ) + (db.node_to_buffer_id(node_id) if _SHORT_BUFFER_ID else node_id) + ")  "

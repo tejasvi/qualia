@@ -12,8 +12,8 @@ from qualia.models import View, NodeId, LastSync, Li, ProcessState, Tree, NODE_I
 from qualia.services.realtime import Realtime
 from qualia.services.utils.realtime_utils import sync_with_realtime_db
 from qualia.utils.buffer_utils import get_md_ast, get_id_line, get_ast_sub_lists, raise_if_duplicate_sibling, \
-    preserve_expand_consider_sub_tree, removeprefix
-from qualia.utils.common_utils import conflict
+    preserve_expand_consider_sub_tree
+from qualia.utils.common_utils import conflict, removeprefix
 from qualia.utils.render_utils import buffer_node_tracker
 from qualia.utils.sync_utils import sync_with_db
 

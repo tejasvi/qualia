@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from base64 import urlsafe_b64encode
+from base64 import urlsafe_b64encode, b64decode, b64encode
 from bisect import bisect_left, insort
 from hashlib import sha256
 from json import dumps
 from logging import getLogger
+from math import ceil
 from os import PathLike
 from re import split
 from secrets import token_bytes
@@ -16,8 +17,8 @@ from typing import Union, cast, Iterable, Callable, IO, TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from qualia.config import _GIT_FOLDER, _LOGGER_NAME, _TRANSPOSED_FILE_PREFIX, \
-    _CONFLICT_MARKER, _ENCRYPTION_KEY_FILE, _ENCRYPTION_USED
-from qualia.models import NodeId, CustomCalledProcessError, El, Li
+    _CONFLICT_MARKER, _ENCRYPTION_KEY_FILE, _ENCRYPTION_USED, _SHORT_ID_STORE_BYTES
+from qualia.models import NodeId, CustomCalledProcessError, El, Li, BufferNodeId
 from qualia.services.backup import removesuffix
 
 if TYPE_CHECKING:
@@ -59,11 +60,10 @@ def _splitlines_conflict_marker(new_lines: Li) -> list[Li]:
     return cast(list[Li], splitted_lines_list)
 
 
-def file_name_to_node_id(full_name: str, extension: str) -> NodeId:
+def file_name_to_file_id(full_name: str, extension: str) -> str:
     if full_name.endswith(extension):
-        node_id = removesuffix(full_name.lstrip(_TRANSPOSED_FILE_PREFIX), extension)
-        UUID(node_id)
-        return cast(NodeId, node_id)
+        file_id = removesuffix(removeprefix(full_name, _TRANSPOSED_FILE_PREFIX), extension)
+        return file_id
     else:
         raise ValueError
 
@@ -113,7 +113,7 @@ class StartLoggedThread(Thread):
         self.start()
 
 
-def _get_uuid() -> NodeId:
+def get_uuid() -> NodeId:
     return cast(NodeId, str(uuid4()))
 
 
@@ -142,8 +142,25 @@ def encrypt_lines(unencrypted_lines: Li) -> El:
 def trigger_buffer_change(nvim):
     # type:(Nvim) -> None
     nvim.async_call(nvim.command,
-                    """execute (expand("%:p")[-5:] ==? ".q.md" && mode() !=# "t") ? "setline('.', getline('.'))" : "" """,
+                    """execute (expand("%:p")[-5:] ==? ".q.md" && mode() !=# "t") ? "TriggerSync" : "" """,
                     async_=True)
 
 
+def buffer_id_decoder(buffer_id: BufferNodeId) -> bytes:
+    # Base64 stores 6 bits per letter. 000000 is represented as 'A'
+    return b64decode(buffer_id.rjust(ceil(_SHORT_ID_STORE_BYTES * 8 / 6), 'A') + "==")  # base65536.decode
+
+
 absent_node_content_lines = cast(Li, [''])
+
+
+def buffer_id_encoder(buffer_id_bytes: bytes) -> BufferNodeId:
+    buffer_id = cast(BufferNodeId, b64encode(buffer_id_bytes).decode().rstrip("=").lstrip('A') or 'A')
+    return buffer_id
+
+
+def removeprefix(input_string: str, suffix: str) -> str:
+    # in 3.9 str.removeprefix
+    if suffix and input_string.startswith(suffix):
+        return input_string[len(suffix):]
+    return input_string

@@ -3,8 +3,6 @@ if exists("g:loaded_qualia")
 endif
 let g:loaded_qualia = 1
 
-"autocmd TextChanged,FocusGained,BufEnter,InsertLeave,BufLeave,BufFilePost,BufAdd,CursorHold *.q.md TriggerSync
-
 function! qualia#install()
     if !has("nvim")
 		echoerr "Please install latest nvim. See https://github.com/neovim/neovim/wiki/Installing-Neovim"
@@ -69,7 +67,7 @@ function! qualia#pretty_id()
     endif
 endfunction
 
-autocmd VimEnter,WinEnter,BufEnter *.q.md call qualia#pretty_id() | call setline('.', getline('.'))
+autocmd VimEnter,WinEnter,BufEnter *.q.md call qualia#pretty_id() | TriggerSync
 
 function! FilterQualiaFiles()
     let new_oldfiles = []
@@ -82,5 +80,6 @@ function! FilterQualiaFiles()
 endfunction
 autocmd VimEnter,BufNew *.q.md call FilterQualiaFiles()
 
+autocmd TextChanged,FocusGained,BufEnter,InsertLeave,BufLeave,BufFilePost,BufAdd,CursorHold *.q.md TriggerSync
 autocmd BufEnter *.q.md setlocal filetype=markdown
 "ॱᐧᣟ⋅⸪⸫⸬⸭⸱ꜗꜘꜙ𑁉𑁊
