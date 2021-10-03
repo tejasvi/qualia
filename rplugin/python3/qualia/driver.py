@@ -36,7 +36,7 @@ class PluginDriver(PluginUtils):
             current_buffer: Buffer = self.nvim.current.buffer
 
             with Database() as db:
-                buffer_name = current_buffer.name
+                buffer_name = self.current_buffer_name()
                 if buffer_name == '':
                     return
                 switched_buffer, transposed, main_id = self.process_filepath(buffer_name, db, view)
@@ -83,7 +83,8 @@ class PluginDriver(PluginUtils):
                                                ' '.join([str(round(n, 3)) for n in (total, del1, del2, time() - t2)]))
                     break
 
-            self.nvim.command("silent set write | silent update")
+            # self.nvim.command("silent set write | silent update")
+            self.nvim.command("Write")
             # self.nvim.command(
             #     "echom 'modified' getbufinfo(bufnr())[0].changed bufname() getbufline(bufnr(), 1, '$') b:changedtick | silent set write | silent update")
             self.changedtick[buffer_id] = self.nvim.eval("b:changedtick")

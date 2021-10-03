@@ -56,7 +56,7 @@ if DEBUG:
     QUALIA_CONFIG_DIR += '_debug'
 
 if not OVERRIDE_ADVANCED_SETTINGS:
-    _SHORT_BUFFER_ID = True  # not DEBUG
+    _SHORT_BUFFER_ID = False  # not DEBUG
     _SORT_SIBLINGS = False
 
     _EXPANDED_BULLET = '-'

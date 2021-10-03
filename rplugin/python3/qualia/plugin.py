@@ -40,8 +40,9 @@ class Qualia(PluginDriver):
     def hoist_node(self) -> None:
         line_num = self.current_line_number()
         view = self.line_node_view(line_num)
+        logger.debug(f"Hoist {line_num, view.main_id, }")
         with Database() as db:
-            db.set_node_view(view, self.file_name_transposed(self.nvim.current.buffer.name))
+            db.set_node_view(view, self.file_name_transposed(self.current_buffer_name()))
             self.navigate_node(view.main_id, True, db)
 
     @command("ToggleBufferSync", sync=True)
@@ -65,7 +66,7 @@ class Qualia(PluginDriver):
 
         parent_line_info = ancestory[1]
 
-        transposed = self.file_name_transposed(self.nvim.current.buffer.name)
+        transposed = self.file_name_transposed(self.current_buffer_name())
         cur_node_id = cur_line_info.node_id
         parent_id = cur_line_info.parent_view.main_id
         grandparent_id = parent_line_info.parent_view.main_id
@@ -114,7 +115,7 @@ class Qualia(PluginDriver):
 
     @command("TransposeNode", sync=True, nargs='?')
     def transpose(self, args: list[str] = None) -> None:
-        currently_transposed = self.file_name_transposed(self.nvim.current.buffer.name)
+        currently_transposed = self.file_name_transposed(self.current_buffer_name())
         node_id = self.line_info(self.current_line_number()).node_id
         try:
             replace_buffer = False if args and int(args[0]) else True

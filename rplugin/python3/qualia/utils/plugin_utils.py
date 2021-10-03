@@ -6,6 +6,8 @@ from pathlib import Path
 from sys import executable
 from time import sleep
 from typing import Optional, TYPE_CHECKING, cast
+from urllib.parse import unquote
+from uuid import UUID
 
 from pynvim import Nvim, NvimError
 
@@ -41,14 +43,31 @@ class PluginUtils:
         logger.debug(text)
         self.nvim.out_write(text + '\n')
 
+    def current_buffer_name(self) -> str:
+        buffer_name: str = self.nvim.current.buffer.name
+
+        vscode_neovim_buffer_prefix = "__vscode_neovim__-file:///"
+        if buffer_name.startswith(vscode_neovim_buffer_prefix):
+            vscode_buffer_name = unquote(buffer_name[len(vscode_neovim_buffer_prefix):])
+            buffer_name = Path(vscode_buffer_name).as_posix()
+
+        return buffer_name
+
     def replace_with_file(self, filepath: str, replace_buffer: bool) -> None:
         # self.nvim.command(f"echom bufname() bufnr() getbufinfo(bufnr())[0].changed '{filepath}' b:changedtick | edit {filepath}")
         # return
-        command = f"let g:qualia_last_buffer=bufnr('%') |  silent edit {filepath} | normal lh"  # wiggle closes FZF popup
-        # command = f"let g:qualia_last_buffer=bufnr('%') | call VSCodeExtensionNotify('open-file', {filepath}, 1) | normal lh"  # wiggle closes FZF popup
+        # command = f"let g:qualia_last_buffer=bufnr('%') |  silent edit {filepath} | normal lh"  # wiggle closes FZF popup
+        command = f"Edit! {filepath}"
+        # try:
+        #     raise Exception
+        # except Exception as e:
+        #     logger.debug(exception_traceback(e))
+        Path(filepath).touch()
+        # command = f"Edit! {filepath}"  # wiggle closes FZF popup
+        logger.debug(f"replace {filepath}")
 
         # silent!
-        if replace_buffer:
+        if replace_buffer and False:
             command += " | bdelete g:qualia_last_buffer"
         try:
             self.nvim.command(command)
@@ -57,9 +76,10 @@ class PluginUtils:
                 raise e
 
     def navigate_node(self, node_id: NodeId, replace_buffer: bool, db: Database) -> None:
-        transposed = self.file_name_transposed(self.nvim.current.buffer.name)
+        transposed = self.file_name_transposed(self.current_buffer_name())
         filepath = self.node_id_filepath(node_id, transposed, db)
-        if self.nvim.current.buffer.name != filepath:
+        if self.current_buffer_name() != filepath:
+            logger.debug(f"Not same path {self.current_buffer_name(), filepath}")
             self.replace_with_file(filepath, replace_buffer)
 
     def process_filepath(self, buffer_name: str, db: Database, view) -> tuple[bool, bool, NodeId]:
@@ -165,7 +185,7 @@ class PluginUtils:
             if not in_normal_mode:
                 return False
 
-        if not (self.enabled and (force or in_normal_mode) and self.nvim.current.buffer.name.endswith(".q.md")):
+        if not (self.enabled and (force or in_normal_mode) and self.current_buffer_name().endswith(".q.md")):
             return False
 
         undotree = self.nvim.funcs.undotree()
