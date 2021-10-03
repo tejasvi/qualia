@@ -223,6 +223,10 @@ class PluginUtils:
 
     @staticmethod
     def buffer_file_id_to_node_id(file_id: BufferFileId, db: Database) -> NodeId:
+        if not _SHORT_BUFFER_ID:
+            UUID(file_id)
+            return cast(NodeId, file_id)
+
         # Base32 stores 5 bits per letter. 00000 is represented as 'A'. The value encoded is in bytes (multiple of 8bits)
         # The length of encoded value will have multiple of 8 characters (8*5 bits representing 5 byte value)
         unpadded_length = ceil(_SHORT_ID_STORE_BYTES * 8 / 5)
