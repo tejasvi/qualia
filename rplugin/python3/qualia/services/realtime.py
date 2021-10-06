@@ -94,7 +94,10 @@ class Realtime(RealtimeUtils):
         from cryptography.fernet import InvalidToken
         current_thread().name = "BroadcastListener"
         value: RealtimeBroadcastPacket = event.data
-        if not value or (value["client_id"] == self.client_id) or (value["timestamp"] < self._accurate_seconds() - 5):
+        for key in ("client_id", "timestamp"):
+            if key not in value:
+                logger.debug(f"Value missing {key}; {value=}")
+        if not value or (value.get("client_id") == self.client_id) or (value.get("timestamp", float('-inf')) < (self._accurate_seconds() - 5)):
             return
         logger.debug(f"Listener got a signal {value}")
 

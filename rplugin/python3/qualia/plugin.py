@@ -1,4 +1,3 @@
-from logging import getLogger
 from time import sleep, time
 from typing import Optional
 
@@ -166,11 +165,9 @@ class Qualia(PluginDriver):
 
 
 if __name__ == "__main__":
-    from qualia.config import _LOGGER_NAME
     from qualia.utils.init_utils import setup_logger
 
-    _logger = getLogger(_LOGGER_NAME)
-    setup_logger(_logger)
+    setup_logger()
 
     nvim_debug = attach('socket', path=NVIM_DEBUG_PIPE)  # path=environ['NVIM_LISTEN_ADDRESS'])
     qualia_debug = Qualia(nvim_debug, True)

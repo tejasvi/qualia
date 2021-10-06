@@ -82,4 +82,5 @@ autocmd VimEnter,BufNew *.q.md call FilterQualiaFiles()
 
 autocmd TextChanged,FocusGained,BufEnter,InsertLeave,BufLeave,BufFilePost,BufAdd,CursorHold *.q.md TriggerSync
 autocmd BufEnter *.q.md setlocal filetype=markdown
+autocmd WinEnter *.q.md set nofoldenable
 "ॱᐧᣟ⋅⸪⸫⸬⸭⸱ꜗꜘꜙ𑁉𑁊

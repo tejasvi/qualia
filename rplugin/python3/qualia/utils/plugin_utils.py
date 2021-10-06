@@ -6,6 +6,7 @@ from pathlib import Path
 from sys import executable
 from time import sleep
 from typing import Optional, TYPE_CHECKING, cast
+from uuid import UUID
 
 from pynvim import Nvim, NvimError
 

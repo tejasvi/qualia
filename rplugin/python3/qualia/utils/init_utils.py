@@ -58,8 +58,16 @@ def install_dependencies(optional_install_dir: str, logger: Optional[logging.Log
                     cmd([get_location("pip"), "install"] + pkg, env=env)
 
 
-def setup_logger(logger: logging.Logger) -> None:
-    from qualia.config import _LOG_FILENAME
+_logger_setup: bool = False
+
+
+def setup_logger() -> None:
+    assert not _logger_setup, "Logger already setup"
+    from qualia.config import _LOG_FILENAME, _LOGGER_NAME
+
+    # Singleton logger
+    logger = logging.getLogger(_LOGGER_NAME)
+
     logger.setLevel(logging.DEBUG if logging.DEBUG else logging.INFO)
     file_handler = RotatingFileHandler(filename=_LOG_FILENAME, mode='w', maxBytes=512000, backupCount=4)
     formatter = logging.Formatter(fmt='%(asctime)s %(levelname)-8s [%(threadName)-12.12s] %(message)s',

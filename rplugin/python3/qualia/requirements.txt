@@ -4,7 +4,9 @@ git+https://github.com/neovim/pynvim
 
 markdown-it-py[plugins]
 lmdb
-appdirs
+
+# appdirs # Stored locally for dependency free config.py
+
 orderedset
 cryptography
 base65536
@@ -19,7 +21,8 @@ ntplib
 requests
 psutil
 
-rpyc
+better_exceptions
+pydevd-pycharm~=203.5981.155
 
 # Dev
 typeguard

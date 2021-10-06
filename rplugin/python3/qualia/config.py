@@ -1,8 +1,7 @@
 from os import environ
 from pathlib import Path
 
-from appdirs import user_data_dir, user_config_dir
-
+from qualia.utils.local_appdirs import user_data_dir, user_config_dir
 from qualia.utils.config_utils import create_directory_if_absent, force_remove_directory
 
 FIREBASE_WEB_APP_CONFIG = {
@@ -52,6 +51,7 @@ else:
 # Internal constants
 
 if DEBUG:
+    environ['BETTER_EXCEPTIONS'] = '1'
     QUALIA_DATA_DIR += '_debug'
     QUALIA_CONFIG_DIR += '_debug'
 
