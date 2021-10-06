@@ -37,10 +37,16 @@ def render_buffer(buffer, new_content_lines, nvim):
     old_content_lines = cast(Li, list(buffer))
     # Pre-Check common state with == (100x faster than loop)
     if old_content_lines != new_content_lines:
+        new_cursor_column = None
+
         line_conflict = True
         first_mismatch_line_num = -1
         for first_mismatch_line_num, (old_line, new_line) in enumerate(zip(old_content_lines, new_content_lines)):
             if old_line != new_line:
+                new_length_excess = len(new_line) - len(old_line)
+                if new_length_excess > 0 and new_line[-3:] == old_line[-3:]:
+                    # Restore cursor when adding a new node (in _normal_ way)
+                    new_cursor_column = nvim.call('getcurpos')[2] + new_length_excess
                 break
         else:
             first_mismatch_line_num += 1
@@ -77,6 +83,9 @@ def render_buffer(buffer, new_content_lines, nvim):
             else:
                 logger.debug("Surgical")
                 surgical_render(buffer, new_content_lines, set_buffer_line, old_content_lines, undojoin)
+
+        if new_cursor_column is not None:
+            nvim.command(f"call setpos('.', [0, getcurpos()[1], {new_cursor_column}, 0])")
     if DEBUG:
         try:
             assert new_content_lines == list(buffer)
