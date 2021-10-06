@@ -31,7 +31,7 @@ def main():
 
     from qualia.plugin import Qualia
 
-    for package in ('firebase_admin', 'markdown_it', 'pynvim'):  # Lazy loaded
+    for package in ('firebase_admin', 'markdown_it', 'pynvim', 'cryptography'):  # Lazy loaded
         if not find_spec(package):
             raise ModuleNotFoundError
 
