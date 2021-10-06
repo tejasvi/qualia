@@ -125,14 +125,17 @@ if _ENCRYPTION_USED:
     from cryptography.fernet import Fernet
 
     if not _ENCRYPTION_KEY_FILE.exists():
-        from cryptography.fernet import Fernet
-
         _ENCRYPTION_KEY_FILE.write_bytes(Fernet.generate_key())
     fernet = Fernet(_ENCRYPTION_KEY_FILE.read_bytes())
 else:
     from qualia.models import AbstractFernet as AbstractFernet
 
-    fernet = cast(Fernet, AbstractFernet(b"dummy_key"))  # noqa[assignment]
+    _abstract_fernet = AbstractFernet(b"dummy_key")  # noqa[assignment]
+    if TYPE_CHECKING:
+        from cryptography.fernet import Fernet
+
+        _abstract_fernet = cast(Fernet, _abstract_fernet)
+    fernet = _abstract_fernet
 
 
 def decrypt_lines(encrypted_lines: El) -> Li:
