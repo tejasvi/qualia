@@ -21,8 +21,11 @@ def main():
 
     if DEBUG:
         # https://www.jetbrains.com/help/pycharm/remote-debugging-with-product.html#remote-debug-config
-        import pydevd_pycharm
-        pydevd_pycharm.settrace('localhost', port=9001, stdoutToServer=True, stderrToServer=True)
+        try:
+            import pydevd_pycharm
+            pydevd_pycharm.settrace('localhost', port=9001, stdoutToServer=True, stderrToServer=True)
+        except Exception as e:
+            _logger.critical('\n'.join(format_exception(None, e, e.__traceback__)))
 
     assert version_info[:2] >= (3, 7), "Use python version equal or higher than 3.7"
 
