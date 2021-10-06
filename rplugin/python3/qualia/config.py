@@ -98,10 +98,6 @@ if not OVERRIDE_ADVANCED_SETTINGS:
 
     _ENCRYPTION_KEY_FILE = _APP_CONFIG_PATH.joinpath('qualia_secret.key')
     _ENCRYPTION_USED = ENCRYPT_DB or ENCRYPT_REALTIME or ENCRYPT_NEW_GIT_REPOSITORY
-    if _ENCRYPTION_USED and not _ENCRYPTION_KEY_FILE.exists():
-        from cryptography.fernet import Fernet
-
-        _ENCRYPTION_KEY_FILE.write_bytes(Fernet.generate_key())
     _GIT_ENCRYPTION_ENABLED_FILE_NAME = '.encryption_enabled'
     _GIT_ENCRYPTION_DISABLED_FILE_NAME = '.encryption_disabled'
 _PREVIEW_NEST_LEVEL = 1

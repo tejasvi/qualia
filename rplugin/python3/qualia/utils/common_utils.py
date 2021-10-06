@@ -124,6 +124,10 @@ def open_write_lf(file_path: Union[str, bytes, PathLike], prevent_overwrite: boo
 if _ENCRYPTION_USED:
     from cryptography.fernet import Fernet
 
+    if not _ENCRYPTION_KEY_FILE.exists():
+        from cryptography.fernet import Fernet
+
+        _ENCRYPTION_KEY_FILE.write_bytes(Fernet.generate_key())
     fernet = Fernet(_ENCRYPTION_KEY_FILE.read_bytes())
 else:
     from qualia.models import AbstractFernet as AbstractFernet
