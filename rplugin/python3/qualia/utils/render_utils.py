@@ -85,7 +85,7 @@ def render_buffer(buffer, new_content_lines, nvim):
                 surgical_render(buffer, new_content_lines, set_buffer_line, old_content_lines, undojoin)
 
         if new_cursor_column is not None:
-            nvim.command(f"call setpos('.', [0, getpos()[1], {new_cursor_column}, 0])")
+            nvim.command(f"call setpos('.', [0, getcurpos()[1], {new_cursor_column}, 0])")
     if DEBUG:
         try:
             assert new_content_lines == list(buffer)
