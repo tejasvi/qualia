@@ -22,8 +22,8 @@ requests
 psutil
 
 better_exceptions
-pydevd-pycharm~=203.5981.155
+# pydevd-pycharm~=203.5981.155
 
 # Dev
-typeguard
+# typeguard
 

@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from logging import getLogger
-from pathlib import Path
-from sys import path, version_info, argv
-
+from sys import argv
 
 # from qualia.utils.perf_utils import perf_imports
 #
@@ -40,9 +37,15 @@ def main():
 
 # Detect if loaded as plugin or from external script
 if argv[-1].endswith("qualia") or argv[-1].endswith("__init__.py"):
+    from logging import getLogger
+    from pathlib import Path
+    from sys import path, version_info
+    
     from traceback import format_exception
     from qualia.utils.init_utils import install_dependencies, setup_logger
     from qualia.config import _LOGGER_NAME
+    optional_install_dir = Path().home().joinpath('.qualia_packages').as_posix()
+    path.append(optional_install_dir)
 
     setup_logger()
     _logger = getLogger(_LOGGER_NAME)
@@ -52,8 +55,6 @@ if argv[-1].endswith("qualia") or argv[-1].endswith("__init__.py"):
     except ModuleNotFoundError as e:
         _logger.critical("Certain packages are missing " + str(e) + "Attempting installation")
 
-        optional_install_dir = Path().home().joinpath('.qualia_packages').as_posix()
-        path.append(optional_install_dir)
         install_dependencies(optional_install_dir, _logger)
 
         QualiaPlugin = main()
