@@ -48,6 +48,11 @@ let g:neosolarized_bold = 1
 let g:neosolarized_underline = 1
 let g:neosolarized_italic = 1
 let g:neosolarized_termBoldAsBright = 1
-colorscheme NeoSolarized
+
+try
+    colorscheme NeoSolarized
+catch
+    message "Can't load NeoSolarized"
+endtry
 
 set mouse=a

@@ -14,6 +14,6 @@ cp binder/binder_init.vim ~/.config/nvim/init.vim
 mkdir -p ~/.config/qualia
 cp binder/binder_config.py ~/.config/qualia/config.py
 
-nvim --headless +PlugInstall +qall  #>/dev/null 2>&1
+nvim --headless +PlugInstall +qall  >/dev/null 2>&1
 
 nvim ~/a.q.md
