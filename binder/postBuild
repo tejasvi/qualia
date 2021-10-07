@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -ex
+#set -ex
 
 curl -sL https://github.com/neovim/neovim/releases/download/stable/nvim-linux64.tar.gz -o /tmp/nvim.tar.gz > /dev/null
 tar -xvf /tmp/nvim.tar.gz -C ~/.local --strip-components=1
