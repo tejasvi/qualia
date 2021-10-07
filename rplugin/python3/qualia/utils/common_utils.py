@@ -171,7 +171,7 @@ def encrypt_lines(unencrypted_lines: Li) -> El:
 def trigger_buffer_change(nvim):
     # type:(Nvim) -> None
     nvim.async_call(nvim.command,
-                    """execute (expand("%:p")[-5:] ==? ".q.md" && mode() !=# "t") ? "TriggerSync" : "" """,
+                    """execute (expand("%:p")[-5:] ==? ".q.md" && mode() !=# "t") ? "TriggerSync 1" : "" """,
                     async_=True)
 
 

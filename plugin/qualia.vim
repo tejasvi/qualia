@@ -67,7 +67,7 @@ function! qualia#pretty_id()
     endif
 endfunction
 
-autocmd VimEnter,WinEnter,BufEnter *.q.md call qualia#pretty_id() | TriggerSync
+autocmd VimEnter,WinEnter,BufEnter *.q.md call qualia#pretty_id()
 
 function! FilterQualiaFiles()
     let new_oldfiles = []
@@ -80,7 +80,7 @@ function! FilterQualiaFiles()
 endfunction
 autocmd VimEnter,BufNew *.q.md call FilterQualiaFiles()
 
-autocmd TextChanged,FocusGained,BufEnter,InsertLeave,BufLeave,BufFilePost,BufAdd,CursorHold *.q.md TriggerSync
+autocmd VimEnter,WinEnter,TextChanged,FocusGained,BufEnter,InsertLeave,BufLeave,BufFilePost,BufAdd,CursorHold *.q.md TriggerSync 1
 autocmd BufEnter *.q.md setlocal filetype=markdown
 autocmd WinEnter *.q.md set nofoldenable
 "ॱᐧᣟ⋅⸪⸫⸬⸭⸱ꜗꜘꜙ𑁉𑁊
