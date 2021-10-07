@@ -16,4 +16,6 @@ cp binder/binder_config.py ~/.config/qualia/config.py
 
 nvim --headless +PlugInstall +qall  >/dev/null 2>&1
 
+jupyter lab workspaces import binder/workspace.json
+
 #nvim ~/a.q.md
