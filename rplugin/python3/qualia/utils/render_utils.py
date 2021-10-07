@@ -4,7 +4,7 @@ from typing import Iterator, Union, cast, Optional, TYPE_CHECKING
 from qualia.config import DEBUG, _EXPANDED_BULLET, _COLLAPSED_BULLET, NEST_LEVEL_SPACES, _SHORT_BUFFER_ID
 from qualia.database import Database
 from qualia.models import NodeId, BufferContentSetter, Li
-from qualia.utils.common_utils import logger
+from qualia.utils.common_utils import live_logger
 
 if TYPE_CHECKING:
     from pynvim.api import Buffer
@@ -81,7 +81,7 @@ def render_buffer(buffer, new_content_lines, nvim):
                     len(new_content_lines) - first_mismatch_line_num) > 1e5:
                 buffer[first_mismatch_line_num:] = new_content_lines[first_mismatch_line_num:]
             else:
-                logger.debug("Surgical")
+                live_logger.debug("Surgical render")
                 surgical_render(buffer, new_content_lines, set_buffer_line, old_content_lines, undojoin)
 
         if new_cursor_column is not None:

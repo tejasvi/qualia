@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sys import argv
 
+
 # from qualia.utils.perf_utils import perf_imports
 #
 # perf_imports()
@@ -20,9 +21,9 @@ def main():
         # https://www.jetbrains.com/help/pycharm/remote-debugging-with-product.html#remote-debug-config
         try:
             import pydevd_pycharm
-            pydevd_pycharm.settrace('localhost', port=9001, stdoutToServer=True, stderrToServer=True)
-        except Exception as e:
-            _logger.critical('\n'.join(format_exception(None, e, e.__traceback__)))
+            pydevd_pycharm.settrace('localhost', port=9001, stdoutToServer=True, stderrToServer=True, suspend=False)
+        except Exception as exp:
+            _logger.critical('\n'.join(format_exception(None, exp, exp.__traceback__)))
 
     assert version_info[:2] >= (3, 7), "Use python version equal or higher than 3.7"
 
@@ -37,18 +38,17 @@ def main():
 
 # Detect if loaded as plugin or from external script
 if argv[-1].endswith("qualia") or argv[-1].endswith("__init__.py"):
-    from logging import getLogger
     from pathlib import Path
     from sys import path, version_info
-    
+
     from traceback import format_exception
     from qualia.utils.init_utils import install_dependencies, setup_logger
     from qualia.config import _LOGGER_NAME
+
     optional_install_dir = Path().home().joinpath('.qualia_packages').as_posix()
     path.append(optional_install_dir)
 
-    setup_logger()
-    _logger = getLogger(_LOGGER_NAME)
+    _logger = setup_logger()
 
     try:
         QualiaPlugin = main()

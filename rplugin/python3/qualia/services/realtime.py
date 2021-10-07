@@ -14,7 +14,7 @@ from qualia.services.utils.realtime_utils import process_children_broadcast, pro
     CONTENT_KEY, RealtimeUtils, network_errors, tuplify_values
 from qualia.services.utils.service_utils import get_task_firing_event
 from qualia.utils.bootstrap_utils import bootstrap
-from qualia.utils.common_utils import logger, exception_traceback, StartLoggedThread
+from qualia.utils.common_utils import live_logger, exception_traceback, StartLoggedThread
 
 if TYPE_CHECKING:
     from firebase_admin.db import Event as FirebaseEvent
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 class Realtime(RealtimeUtils):
     def __init__(self, buffer_sync_trigger: Callable) -> None:
         super().__init__()
-        logger.critical("Enter")
+        live_logger.debug("Enter")
 
         self.broadcast_conflicts_queue: Queue[RealtimeBroadcastPacket] = Queue()
 
@@ -36,7 +36,7 @@ class Realtime(RealtimeUtils):
         import firebase_admin  # Takes ~0.8 s
         import firebase_admin.db as db
 
-        logger.debug("Connecting firebase")
+        live_logger.debug("Connecting firebase")
         default_app = firebase_admin.initialize_app(options=FIREBASE_WEB_APP_CONFIG)
 
         self.data_ref = db.reference('/data', default_app)
@@ -50,7 +50,7 @@ class Realtime(RealtimeUtils):
 
     def update_online_status(self) -> None:
         from requests import HTTPError
-        logger.debug("In online update")
+        live_logger.debug("In online update")
         try:
             while True:
                 try:
@@ -62,7 +62,7 @@ class Realtime(RealtimeUtils):
                 except network_errors():
                     sleep(5)
         except Exception as e:
-            logger.critical("Error while updating status " + exception_traceback(e))
+            live_logger.critical("Error while updating online status " + exception_traceback(e))
 
     def check_others_online(self) -> bool:
         from requests import HTTPError  # Takes ~0.1s
@@ -96,10 +96,11 @@ class Realtime(RealtimeUtils):
         value: RealtimeBroadcastPacket = event.data
         for key in ("client_id", "timestamp"):
             if key not in value:
-                logger.debug(f"Value missing {key}; {value=}")
-        if not value or (value.get("client_id") == self.client_id) or (value.get("timestamp", float('-inf')) < (self._accurate_seconds() - 5)):
+                live_logger.error(f"Value missing {key}; {value=}")
+        if not value or (value.get("client_id") == self.client_id) or (
+                value.get("timestamp", float('-inf')) < (self._accurate_seconds() - 5)):
             return
-        logger.debug(f"Listener got a signal {value}")
+        live_logger.debug(f"Listener got a signal {value}")
 
         children_changed = content_changed = False
         broadcast_conflicts: RealtimeBroadcastPacket = {}
@@ -113,7 +114,7 @@ class Realtime(RealtimeUtils):
                         cast(RealtimeStringifiedContent, tuplify_values(value[CONTENT_KEY])),
                         db, 'encryption_enabled' in value and value['encryption_enabled'])
                 except InvalidToken as e:
-                    logger.critical(
+                    live_logger.critical(
                         "Can't decrypt broadcast content. Ensure the encryption keys match." + exception_traceback(e))
                     return
             if CHILDREN_KEY in value:
@@ -168,6 +169,6 @@ class Realtime(RealtimeUtils):
 if __name__ == "__main__" and argv[-1].endswith("realtime.py"):
     bootstrap()
     Realtime(lambda: None)
-    logger.info("Realtime sync started externally")
+    live_logger.debug("Realtime sync started externally")
     while True:
         sleep(100)

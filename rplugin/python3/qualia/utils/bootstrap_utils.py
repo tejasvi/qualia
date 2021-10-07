@@ -11,7 +11,7 @@ from qualia.models import DbClient, CustomCalledProcessError, NodeId, Li, KeyNot
 from qualia.services.backup import backup_db
 from qualia.services.listener import RpcListenExternal
 from qualia.utils.common_utils import cd_run_git_cmd, exception_traceback, StartLoggedThread, open_write_lf
-from qualia.utils.common_utils import logger
+from qualia.utils.common_utils import live_logger
 
 
 def ensure_root_node(db: Database) -> None:
@@ -35,12 +35,16 @@ def setup_repository(client_data: DbClient) -> None:
         cd_run_git_cmd(["checkout", "-b", GIT_BRANCH])
         if GIT_AUTHORIZED_REMOTE:
             try:
-                logger.debug("Fetching repository")
+                live_logger.debug("Fetching repository")
                 cd_run_git_cmd(["fetch", GIT_AUTHORIZED_REMOTE, GIT_BRANCH])
-                cd_run_git_cmd(["merge", "FETCH_HEAD"])
             except CustomCalledProcessError as e:
-                logger.critical(f"Can't fetch and merge from {GIT_BRANCH}.\nError: " + exception_traceback(e))
-                raise e
+                live_logger.debug(f"Can't fetch and merge from {GIT_BRANCH}.\nError: " + exception_traceback(e))
+            else:
+                try:
+                    cd_run_git_cmd(["merge", "FETCH_HEAD"])
+                except CustomCalledProcessError as e:
+                    live_logger.critical(f"Can't merge with fetched data.\nError: " + exception_traceback(e))
+                    raise e
 
         gitattributes_path = _GIT_FOLDER.joinpath(".gitattributes")
         if not gitattributes_path.exists():

@@ -13,11 +13,11 @@ from subprocess import run, CalledProcessError
 from threading import Thread
 from time import time_ns
 from traceback import format_exception
-from typing import Union, cast, Iterable, Callable, IO, TYPE_CHECKING
+from typing import Union, cast, Iterable, Callable, IO, TYPE_CHECKING, Optional
 from uuid import UUID, uuid4
 
 from qualia.config import _GIT_FOLDER, _LOGGER_NAME, _TRANSPOSED_FILE_PREFIX, \
-    _CONFLICT_MARKER, _ENCRYPTION_KEY_FILE, _ENCRYPTION_USED, _SHORT_ID_STORE_BYTES
+    _CONFLICT_MARKER, _ENCRYPTION_KEY_FILE, _ENCRYPTION_USED, _SHORT_ID_STORE_BYTES, DEBUG
 from qualia.models import NodeId, CustomCalledProcessError, El, Li, BufferNodeId
 from qualia.services.backup import removesuffix
 
@@ -77,11 +77,33 @@ def cd_run_git_cmd(arguments: list[str]) -> str:
     except CalledProcessError as e:
         raise CustomCalledProcessError(e)
     stdout = f"{result.stdout}{result.stderr}".strip()
-    logger.debug(f"Git:\n{stdout}\n")
+    live_logger.debug(f"Git:\n{stdout}\n")
     return stdout
 
 
-logger = getLogger(_LOGGER_NAME)
+class _LiveLogger:
+    def __init__(self) -> None:
+        self._nvim: Optional[Nvim] = None
+        self._logger = getLogger(_LOGGER_NAME)
+        self._visible_levels = {"info", "warning", "error", "critical"}
+
+    def __getattr__(self, name) -> Callable[[object], None]:
+        def wrapper(msg: object) -> None:
+            msg = str(msg)
+            if self._nvim is not None and (DEBUG or name in self._visible_levels):
+                try:
+                    self._nvim.async_call(self._nvim.out_write, msg + '\n')
+                except Exception as e:
+                    msg += ('\n' + exception_traceback(e))
+            getattr(self._logger, name)(msg)
+
+        return wrapper
+
+    def attach_nvim(self, nvim: Nvim):
+        self._nvim = nvim
+
+
+live_logger = _LiveLogger()
 
 
 def exception_traceback(e: BaseException) -> str:
@@ -106,7 +128,7 @@ class StartLoggedThread(Thread):
             try:
                 target()
             except BaseException as e:
-                logger.critical("Exception in thread " + name + "\n" + exception_traceback(e))
+                live_logger.critical("Error in thread " + name + "\n" + exception_traceback(e))
                 raise e
 
         super().__init__(target=logged_target, name=name)

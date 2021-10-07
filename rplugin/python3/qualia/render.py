@@ -8,7 +8,6 @@ from qualia.config import DEBUG, _SORT_SIBLINGS
 from qualia.database import Database
 from qualia.models import NodeId, View, NodeData, LastSync, LineInfo, Li, InvalidNodeId
 from qualia.sync import ParseProcess
-from qualia.utils.common_utils import logger
 from qualia.utils.render_utils import render_buffer, content_lines_to_buffer_lines
 
 if TYPE_CHECKING:
@@ -41,7 +40,6 @@ def render(root_view, buffer, nvim, db, transposed, fold_level):
                 re_last_sync, re_content_lines = get_buffer_lines_from_view(new_root_view, db, transposed,
                                                                             fold_level)
             raise exp
-        logger.debug(f"{(new_content_lines, old_content_lines)}")
     return new_last_sync
 
 

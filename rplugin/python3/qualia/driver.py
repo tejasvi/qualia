@@ -13,7 +13,7 @@ from qualia.services.git import sync_with_git
 from qualia.services.realtime import Realtime
 from qualia.services.utils.service_utils import get_task_firing_event
 from qualia.sync import sync_buffer
-from qualia.utils.common_utils import logger, trigger_buffer_change, exception_traceback
+from qualia.utils.common_utils import live_logger, trigger_buffer_change, exception_traceback
 from qualia.utils.plugin_utils import PluginUtils
 
 if TYPE_CHECKING:
@@ -30,7 +30,6 @@ class PluginDriver(PluginUtils):
         self.git_sync_event = get_task_firing_event(lambda: sync_with_git(nvim), 1)  # 15)
 
     def main(self, view: Optional[View], fold_level: Optional[int]) -> None:
-        logger.critical("Main")
         t0 = time()
         with self.sync_render_lock:
             current_buffer: Buffer = self.nvim.current.buffer
@@ -79,8 +78,8 @@ class PluginDriver(PluginUtils):
 
                         total = time() - t0
                         if DEBUG:  # and total > 0.1:
-                            self.print_message("Took: ",
-                                               ' '.join([str(round(n, 3)) for n in (total, del1, del2, time() - t2)]))
+                            live_logger.debug(
+                                "Took: " + ' '.join([str(round(n, 3)) for n in (total, del1, del2, time() - t2)]))
                     break
 
             self.nvim.command("silent set write | silent update")
@@ -89,7 +88,7 @@ class PluginDriver(PluginUtils):
             self.changedtick[buffer_id] = self.nvim.eval("b:changedtick")
 
     def trigger_sync(self, force: bool) -> None:
-        logger.critical("Trigger")
+        live_logger.debug(f"Trigger {time()}")
         if self.ide_debugging or not self.should_continue(force):
             return
         try:

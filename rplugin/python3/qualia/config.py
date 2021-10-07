@@ -1,8 +1,8 @@
 from os import environ
 from pathlib import Path
 
-from qualia.utils.local_appdirs import user_data_dir, user_config_dir
 from qualia.utils.config_utils import create_directory_if_absent, force_remove_directory
+from qualia.utils.local_appdirs import user_data_dir, user_config_dir
 
 FIREBASE_WEB_APP_CONFIG = {
     # On https://console.firebase.google.com (free plan),

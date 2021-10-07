@@ -13,7 +13,7 @@ from orderedset import OrderedSet
 from qualia.config import GIT_SEARCH_URL, _GIT_FOLDER, GIT_BRANCH, _SORT_SIBLINGS
 from qualia.database import Database
 from qualia.models import NodeId, El, Li
-from qualia.utils.common_utils import cd_run_git_cmd, logger, open_write_lf, decrypt_lines, encrypt_lines
+from qualia.utils.common_utils import cd_run_git_cmd, live_logger, open_write_lf, decrypt_lines, encrypt_lines
 
 _BACKLINK_LINE_START = "0. [`Backlinks`]"
 _CONTENT_CHILDREN_SEPARATOR_LINES = ["<hr>", ""]
@@ -108,7 +108,7 @@ class GitInit:
                 break
             except PidFileAlreadyLockedError as e:
                 if try_num == retry_count:
-                    logger.critical("Git sync failed due to failed lock acquisition.")
+                    live_logger.critical("Git sync failed due to failed lock acquisition.")
                     raise e
                 sleep(5)
         existing_branch = cd_run_git_cmd(["branch", "--show-current"])

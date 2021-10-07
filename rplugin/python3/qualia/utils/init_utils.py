@@ -61,7 +61,7 @@ def install_dependencies(optional_install_dir: str, logger: Optional[logging.Log
 _logger_setup: bool = False
 
 
-def setup_logger() -> None:
+def setup_logger() -> logging.Logger:
     assert not _logger_setup, "Logger already setup"
     from qualia.config import _LOG_FILENAME, _LOGGER_NAME
 
@@ -76,3 +76,5 @@ def setup_logger() -> None:
     logger.addHandler(file_handler)
     logger.critical("== STARTING on " + datetime.today().isoformat() + " ==")
     logger.addHandler(logging.StreamHandler())
+
+    return logger

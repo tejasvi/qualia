@@ -1,7 +1,7 @@
 from qualia.models import Li, ListenerRequest
 from qualia.services.utils.listener_utils import create_listener
 from qualia.services.utils.preview_utils import preview_node
-from qualia.utils.common_utils import logger, exception_traceback
+from qualia.utils.common_utils import live_logger, exception_traceback
 
 
 class RpcListenExternal:
@@ -12,24 +12,24 @@ class RpcListenExternal:
             while True:
                 with listener.accept() as conn:
                     self.conn = conn
-                    logger.debug('connection accepted from', self.listener.last_accepted)
+                    live_logger.debug(f"Connection accepted from {self.listener.last_accepted}")
                     while not self.conn.closed:
                         try:
                             request_params: ListenerRequest = self.conn.recv()
                         except ConnectionResetError:
-                            logger.critical("Connection broken")
+                            live_logger.critical("Connection broken")
                             break
                         try:
                             function, args, kwargs = request_params
                         except ValueError as e:
-                            logger.critical(f"Invalid number of request paramters {request_params=}")
+                            live_logger.critical(f"Invalid number of request paramters {request_params=}")
                             self.safe_send(exception_traceback(e) + str(request_params))
                             break
                         try:
                             rpc_result = getattr(self, function)(*args, **kwargs)
                         except Exception as e:
                             traceback = exception_traceback(e)
-                            logger.debug(traceback)
+                            live_logger.critical(traceback)
                             self.safe_send(traceback)
                         else:
                             self.safe_send(rpc_result)
@@ -38,7 +38,7 @@ class RpcListenExternal:
         try:
             self.conn.send(data)
         except OSError as e:
-            logger.debug(str(e))
+            live_logger.critical(str(e))
 
     def close_connection(self) -> None:
         self.conn.close()

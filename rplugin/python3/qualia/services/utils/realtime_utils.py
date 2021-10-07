@@ -14,7 +14,7 @@ from qualia.models import RealtimeBroadcastPacket, NodeId, RealtimeContent, Real
     RealtimeStringifiedContent, RealtimeStringifiedChildren, StringifiedChildren, \
     StringifiedContent, El, Li, RealtimeChildren
 from qualia.services.utils.service_utils import content_hash
-from qualia.utils.common_utils import conflict, logger, \
+from qualia.utils.common_utils import conflict, live_logger, \
     ordered_data_hash, StartLoggedThread, exception_traceback, decrypt_lines, encrypt_lines, \
     children_data_hash, absent_node_content_lines
 
@@ -115,7 +115,7 @@ def parse_realtime_data_item(data_dict: RealtimeStringifiedData) -> Iterator[
             node_id, (last_hash, stringified_downstream_data) = item
             downstream_data: Union[list[NodeId], El] = loads(stringified_downstream_data)
         except (ValueError, JSONDecodeError):
-            logger.critical("[Realtime Sync] Got corrupt value: ", item)
+            live_logger.error(f"[Realtime Sync] Got corrupt value: {item}")
             continue
         yield downstream_data, last_hash, node_id
 
@@ -138,14 +138,14 @@ class RealtimeUtils(metaclass=ABCMeta):
     def client_broadcast(self, broadcast_data: RealtimeBroadcastPacket) -> None:
         broadcast_needed = stringify_broadcast_data(broadcast_data)
         if broadcast_needed and self.initialization_event.wait(5):
-            logger.debug(broadcast_data)
+            live_logger.debug(broadcast_data)
             broadcast_data["client_id"] = self.client_id
             broadcast_data["timestamp"] = self._accurate_seconds()
             broadcast_data["encryption_enabled"] = ENCRYPT_REALTIME
             try:
                 self.data_ref.set(broadcast_data)
             except network_errors():
-                logger.debug("Couldn't broadcast due to network error.")
+                live_logger.debug("Couldn't broadcast due to network error.")
 
     def new_client_listener(self, event):
         # type:(RealtimeUtils, FirebaseEvent) -> None
@@ -160,16 +160,16 @@ class RealtimeUtils(metaclass=ABCMeta):
         return int(self.offset_seconds + time())
 
     def initialize(self) -> None:
-        logger.debug("Initializing")
+        live_logger.debug("Initializing")
         while True:
             try:
                 self.offset_seconds = NTPClient().request('time.google.com').offset
                 self.connect_firebase()
             except network_errors() as e:
-                logger.critical("Couldn't connect to firebase\n" + exception_traceback(e))
+                live_logger.debug("Couldn't connect to firebase\n" + exception_traceback(e))
                 sleep(5)
             except Exception as e:
-                logger.critical("Firebase error\n" + exception_traceback(e))
+                live_logger.error("Firebase error\n" + exception_traceback(e))
                 raise e
             else:
                 self.initialization_event.set()

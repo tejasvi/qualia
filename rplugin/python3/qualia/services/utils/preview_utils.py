@@ -68,7 +68,7 @@ def preview_node(node_id, separator_width, output_height, depth):
             preview_lines.extend(
                 pad_lines(db.get_node_content_lines(node_id), separator_width, min_content_height))
         except KeyNotFoundError:
-            raise Exception("Requested Node ID does not exist on the database.")
+            raise Exception(f"Requested Node ID does not exist on the database used by ")
         for transposed, min_height in ((False, min_children_height), (True, min_parents_height)):
             preview_lines.extend(pad_lines(
                 get_descendant_preview_lines(node_id, db, transposed, separator_width, depth - 1)

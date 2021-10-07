@@ -5,7 +5,7 @@ from typing import Iterator, Optional
 
 from psutil import Process
 
-from qualia.utils.common_utils import logger
+from qualia.utils.common_utils import live_logger
 
 _seeded_random = Random(923487)
 
@@ -26,8 +26,8 @@ def create_listener() -> Listener:
             if proc is None:
                 raise e
             else:
-                logger.debug(f"Port {_LISTENER_PORT} already in use by {proc.name()} with PID={proc.pid}."
-                             " Retrying after 30s")
+                live_logger.debug(f"Port {_LISTENER_PORT} already in use by {proc.name()} with PID={proc.pid}."
+                                  " Retrying after 30s")
                 sleep(10)
     return listener
 

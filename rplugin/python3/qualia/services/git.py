@@ -15,7 +15,7 @@ from qualia.config import GIT_BRANCH, GIT_AUTHORIZED_REMOTE, _GIT_FOLDER, \
     _GIT_ENCRYPTION_ENABLED_FILE_NAME
 from qualia.models import CustomCalledProcessError, GitChangedNodes, GitMergeError, KeyNotFoundError, NodeId
 from qualia.utils.bootstrap_utils import repository_setup, bootstrap
-from qualia.utils.common_utils import cd_run_git_cmd, file_name_to_file_id, logger, \
+from qualia.utils.common_utils import cd_run_git_cmd, file_name_to_file_id, live_logger, \
     exception_traceback, conflict, trigger_buffer_change
 from qualia.database import Database
 from qualia.services.utils.git_utils import create_markdown_file, repository_file_to_content_children, \
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 def sync_with_git(nvim):
     # type:(Optional[Nvim]) -> None
-    logger.critical("Git sync started")
+    live_logger.debug("Git sync started")
     assert repository_setup.wait(60), "Repository setup not yet finished"
     try:
         with GitInit():
@@ -36,7 +36,7 @@ def sync_with_git(nvim):
             with Database() as db:
                 if changed_file_names:
                     directory_to_db(db, changed_file_names, repository_encrypted)
-                    logger.debug("Git Change")
+                    live_logger.debug("Git Change")
                     if nvim:
                         trigger_buffer_change(nvim)
                 db_to_directory(db, repository_encrypted)
@@ -46,7 +46,7 @@ def sync_with_git(nvim):
             nvim.async_call(
                 nvim.err_write(
                     "Merging the new changes in git repository failed. Inspect at " + _GIT_FOLDER.as_posix()))
-        logger.critical(
+        live_logger.critical(
             "Error while syncing with git\n" + exception_traceback(e))
         raise e
 
@@ -60,7 +60,7 @@ def fetch_from_remote() -> list[str]:
     try:
         cd_run_git_cmd(["fetch", GIT_AUTHORIZED_REMOTE, GIT_BRANCH])
     except CustomCalledProcessError:
-        logger.critical("Couldn't fetch")
+        live_logger.debug("Couldn't fetch")
     else:
         try:
             cd_run_git_cmd(["merge-base", "--is-ancestor", "FETCH_HEAD", "HEAD"])
@@ -88,7 +88,7 @@ def push_to_remote() -> None:
         try:
             cd_run_git_cmd(["push", "-u", GIT_AUTHORIZED_REMOTE, GIT_BRANCH])
         except CustomCalledProcessError as e:
-            logger.critical("Could not push: " + str(e))
+            live_logger.debug("Could not push: " + str(e))
 
 
 def directory_to_db(db: Database, changed_file_names: list[str], repository_encrypted: bool) -> None:
@@ -102,12 +102,11 @@ def directory_to_db(db: Database, changed_file_names: list[str], repository_encr
                 UUID(file_id)
                 node_id = cast(NodeId, file_id)
             except ValueError:
-                logger.critical("Invalid ", relative_file_path)
+                live_logger.critical(f"Invalid {relative_file_path}")
             else:
                 with open(absolute_file_path) as f:
                     content_lines, children_ids = repository_file_to_content_children(f, repository_encrypted)
                     changed_nodes[node_id] = OrderedSet(children_ids), content_lines
-    logger.debug(f"d2db {changed_file_names} {changed_nodes}")
 
     sync_git_to_db(changed_nodes, db)
 

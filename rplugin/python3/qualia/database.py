@@ -8,7 +8,7 @@ from orderedset import OrderedSet
 from qualia.config import ENCRYPT_DB, _ROOT_ID_KEY, _DB_ENCRYPTION_ENABLED_KEY, _CLIENT_KEY, \
     _SHORT_ID_STORE_BYTES
 from qualia.models import NodeId, El, Li, View, Tree, DbClient, BufferNodeId
-from qualia.utils.common_utils import decrypt_lines, encrypt_lines, get_uuid, logger, children_data_hash, \
+from qualia.utils.common_utils import decrypt_lines, encrypt_lines, get_uuid, children_data_hash, \
     fernet, normalized_search_prefixes, buffer_id_encoder
 from qualia.utils.database_utils import LMDB
 
@@ -138,7 +138,6 @@ class _DbNodeIds(LMDB):
             # https://github.com/neovim/neovim/issues/15565
             # Base64 stores 6 bits per letter. 000000 is represented as 'A'
             buffer_node_id = buffer_id_encoder(buffer_id_bytes)
-            logger.debug(f"{node_id} {buffer_node_id}")
             self._set_key_val(node_id, buffer_node_id, self._cursors.node_id_buffer_id, True)
             self._set_key_val(buffer_id_bytes, node_id, self._cursors.buffer_id_bytes_node_id, True)
         return cast(BufferNodeId, buffer_node_id)

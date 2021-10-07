@@ -15,9 +15,8 @@ See <https://github.com/ActiveState/appdirs> for details and usage.
 __version__ = "1.4.4"
 __version_info__ = tuple(int(segment) for segment in __version__.split("."))
 
-
-import sys
 import os
+import sys
 
 PY3 = sys.version_info[0] == 3
 
@@ -26,19 +25,19 @@ if PY3:
 
 if sys.platform.startswith('java'):
     import platform
+
     os_name = platform.java_ver()[3][0]
-    if os_name.startswith('Windows'): # "Windows XP", "Windows 7", etc.
+    if os_name.startswith('Windows'):  # "Windows XP", "Windows 7", etc.
         system = 'win32'
-    elif os_name.startswith('Mac'): # "Mac OS X", etc.
+    elif os_name.startswith('Mac'):  # "Mac OS X", etc.
         system = 'darwin'
-    else: # "Linux", "SunOS", "FreeBSD", etc.
+    else:  # "Linux", "SunOS", "FreeBSD", etc.
         # Setting this to "linux2" is not ideal, but only Windows or Mac
         # are actually checked for and the rest of the module expects
         # *sys.platform* style strings.
         system = 'linux2'
 else:
     system = sys.platform
-
 
 
 def user_data_dir(appname=None, appauthor=None, version=None, roaming=False):
@@ -413,8 +412,9 @@ def user_log_dir(appname=None, appauthor=None, version=None, opinion=True):
 
 class AppDirs(object):
     """Convenience wrapper for getting application dirs."""
+
     def __init__(self, appname=None, appauthor=None, version=None,
-            roaming=False, multipath=False):
+                 roaming=False, multipath=False):
         self.appname = appname
         self.appauthor = appauthor
         self.version = version
@@ -439,7 +439,7 @@ class AppDirs(object):
     @property
     def site_config_dir(self):
         return site_config_dir(self.appname, self.appauthor,
-                             version=self.version, multipath=self.multipath)
+                               version=self.version, multipath=self.multipath)
 
     @property
     def user_cache_dir(self):
@@ -457,7 +457,7 @@ class AppDirs(object):
                             version=self.version)
 
 
-#---- internal support stuff
+# ---- internal support stuff
 
 def _get_win_folder_from_registry(csidl_name):
     """This is a fallback technique at best. I'm not sure if using the
@@ -465,9 +465,9 @@ def _get_win_folder_from_registry(csidl_name):
     names.
     """
     if PY3:
-      import winreg as _winreg
+        import winreg as _winreg
     else:
-      import _winreg  # noqa
+        import _winreg  # noqa
 
     shell_folder_name = {
         "CSIDL_APPDATA": "AppData",
@@ -509,6 +509,7 @@ def _get_win_folder_with_ctypes(csidl_name):
 
     return buf.value
 
+
 def _get_win_folder_with_jna(csidl_name):
     import array
     from com.sun import jna  # noqa
@@ -535,6 +536,7 @@ def _get_win_folder_with_jna(csidl_name):
 
     return dir
 
+
 def _get_win_folder_from_environ(csidl_name):
     env_var_name = {
         "CSIDL_APPDATA": "APPDATA",
@@ -543,6 +545,7 @@ def _get_win_folder_from_environ(csidl_name):
     }[csidl_name]
 
     return os.environ[env_var_name]
+
 
 if system == "win32":
     try:
@@ -553,9 +556,9 @@ if system == "win32":
         except ImportError:
             try:
                 if PY3:
-                  import winreg as _winreg
+                    import winreg as _winreg
                 else:
-                  import _winreg
+                    import _winreg
             except ImportError:
                 _get_win_folder = _get_win_folder_from_environ
             else:
@@ -565,8 +568,7 @@ if system == "win32":
     else:
         _get_win_folder = _get_win_folder_with_ctypes
 
-
-#---- self test code
+# ---- self test code
 
 if __name__ == "__main__":
     appname = "MyApp"

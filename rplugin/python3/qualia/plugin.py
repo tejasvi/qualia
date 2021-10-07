@@ -1,4 +1,4 @@
-from time import sleep, time
+from time import sleep
 from typing import Optional
 
 from orderedset import OrderedSet
@@ -10,7 +10,7 @@ from qualia.driver import PluginDriver
 from qualia.models import NodeId
 from qualia.services.search import matching_nodes_content, fzf_input_line
 from qualia.utils.bootstrap_utils import bootstrap
-from qualia.utils.common_utils import exception_traceback, normalized_search_prefixes, logger
+from qualia.utils.common_utils import exception_traceback, normalized_search_prefixes, live_logger
 from qualia.utils.plugin_utils import get_orphan_node_ids, PluginUtils
 
 
@@ -18,15 +18,15 @@ from qualia.utils.plugin_utils import get_orphan_node_ids, PluginUtils
 class Qualia(PluginDriver):
     def __init__(self, nvim: Nvim, ide_debugging: bool = False):
         try:
+            live_logger.attach_nvim(nvim)
             bootstrap()
             super().__init__(nvim, ide_debugging)
         except Exception as e:
-            logger.critical("Error during initialization" + exception_traceback(e))
+            live_logger.critical("Error during initialization" + exception_traceback(e))
             raise e
 
     @command("TriggerSync", sync=True, nargs='?')
     def trigger_sync_cmd(self, args: list = None) -> None:
-        self.print_message("Trigger", time())
         self.trigger_sync(True if args and int(args[0]) else False)
 
     @command("NavigateNode", sync=True, nargs='?')
@@ -48,7 +48,7 @@ class Qualia(PluginDriver):
         self.enabled = not self.enabled
         if self.enabled:
             self.trigger_sync(True)
-        self.print_message("Buffer sync paused" if self.enabled else "Buffer sync enabled")
+        live_logger.info("Buffer sync paused" if self.enabled else "Buffer sync enabled")
 
     @command("PromoteNode", sync=True)  # TODO: Range
     def promote_node(self) -> None:
@@ -58,8 +58,8 @@ class Qualia(PluginDriver):
             cur_line_info = ancestory[0]
             assert cur_line_info.nested_level >= 2
         except Exception as e:
-            self.print_message("Can't promote node beyond current level.")
-            logger.critical(exception_traceback(e))
+            live_logger.error("Can't promote node beyond current level.")
+            live_logger.critical(exception_traceback(e))
             return
 
         parent_line_info = ancestory[1]
@@ -85,7 +85,7 @@ class Qualia(PluginDriver):
         cur_line_info = self.line_info(self.current_line_number())
 
         if cur_line_info is self.line_info(0):
-            self.print_message("Can't toggle top level node")
+            live_logger.error("Can't toggle top level node")
         else:
             cur_context = cur_line_info.parent_view.sub_tree
             assert cur_context is not None
@@ -107,7 +107,7 @@ class Qualia(PluginDriver):
             fold_level = int(args[0])
             assert fold_level > 0
         except (AssertionError, ValueError):
-            self.print_message("Minimum fold level should be 1. Argument list provided: ", args)
+            live_logger.error(f"Minimum fold level should be 1. Argument list provided: {args}")
         else:
             self.main(None, fold_level)
 
@@ -118,7 +118,7 @@ class Qualia(PluginDriver):
         try:
             replace_buffer = False if args and int(args[0]) else True
         except ValueError:
-            self.print_message(
+            live_logger.error(
                 "Optional argument to specify buffer replacement should be 1 or 0. Provided argument list: ", args)
         else:
             with Database() as db:

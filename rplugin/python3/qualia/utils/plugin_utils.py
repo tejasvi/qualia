@@ -17,7 +17,7 @@ from qualia.database import Database
 from qualia.models import NodeId, DuplicateNodeException, UncertainNodeChildrenException, View, BufferId, LastSync, \
     LineInfo, KeyNotFoundError, BufferFileId
 from qualia.utils.buffer_utils import buffer_to_node_id
-from qualia.utils.common_utils import logger, exception_traceback, file_name_to_file_id, buffer_id_decoder, \
+from qualia.utils.common_utils import live_logger, exception_traceback, file_name_to_file_id, buffer_id_decoder, \
     buffer_id_encoder
 
 if TYPE_CHECKING:
@@ -36,11 +36,6 @@ class PluginUtils:
         self.buffer_last_sync: dict[BufferId, LastSync] = defaultdict(LastSync)
         self.last_git_sync = 0.
         self.enabled: bool = True
-
-    def print_message(self, *args: object):
-        text = ' - '.join([str(text) for text in args])
-        logger.debug(text)
-        self.nvim.out_write(text + '\n')
 
     def replace_with_file(self, filepath: str, replace_buffer: bool) -> None:
         # self.nvim.command(f"echom bufname() bufnr() getbufinfo(bufnr())[0].changed '{filepath}' b:changedtick | edit {filepath}")
@@ -79,7 +74,7 @@ class PluginUtils:
         transposed = self.file_name_transposed(buffer_name)
         root_id = db.get_root_id()
         self.replace_with_file(self.node_id_filepath(root_id, transposed, db), True)
-        # self.print_message("Redirecting to root node")
+        live_logger.info("Redirecting to root node")
         return root_id, transposed
 
     def current_buffer_id(self) -> Optional[BufferId]:
@@ -97,7 +92,7 @@ class PluginUtils:
     def handle_duplicate_node(self, buffer, exp):
         # type: (Buffer, DuplicateNodeException)->None
         self.nvim.command("set nowrite")
-        self.print_message(
+        live_logger.info(
             f"Duplicate siblings at lines {', '.join([str(first_line) for first_line, _ in exp.line_ranges])}")
         for node_locs in exp.line_ranges:
             for line_num in range(node_locs[0], node_locs[1]):
@@ -137,9 +132,7 @@ class PluginUtils:
         for line_number in range(line_num, -1, -1):
             if line_number in line_data:
                 cur_level = line_data[line_number].nested_level
-                logger.debug(cur_level)
                 if cur_level < last_level:
-                    logger.debug("HEre")
                     info_list.append(line_data[line_number])
                     last_level = cur_level
                     level_count -= 1
@@ -195,7 +188,7 @@ class PluginUtils:
         try:
             changedtick = self.nvim.eval("b:changedtick")
         except OSError as e:
-            self.print_message(exception_traceback(e))
+            live_logger.critical(exception_traceback(e))
         else:
             if not force and changedtick == self.changedtick[buffer_id]:
                 return False
