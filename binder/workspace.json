@@ -1,0 +1,49 @@
+{
+  "data": {
+    "layout-restorer:data": {
+      "main": {
+        "dock": {
+          "type": "tab-area",
+          "currentIndex": 0,
+          "widgets": [
+            "terminal:1"
+          ]
+        },
+        "current": "terminal:1"
+      },
+      "down": {
+        "size": 0,
+        "widgets": []
+      },
+      "left": {
+        "collapsed": true,
+        "widgets": [
+          "filebrowser",
+          "running-sessions",
+          "@jupyterlab/toc:plugin",
+          "extensionmanager.main-view"
+        ]
+      },
+      "right": {
+        "collapsed": true,
+        "widgets": [
+          "jp-property-inspector",
+          "debugger-sidebar"
+        ]
+      },
+      "~/.jupyter/lab/workspacesrelativeSizes": [
+        0,
+        1,
+        0
+      ]
+    },
+    "terminal:1": {
+      "data": {
+        "name": "1"
+      }
+    }
+  },
+  "metadata": {
+    "id": "auto-z"
+  }
+}
