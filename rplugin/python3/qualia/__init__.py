@@ -1,29 +1,40 @@
 from __future__ import annotations
 
+# if True or DEBUG and ATTACH_PYCHARM:
+#     # https://www.jetbrains.com/help/pycharm/remote-debugging-with-product.html#remote-debug-config
+#     try:
+#         import pydevd_pycharm
+#
+#         pydevd_pycharm.settrace('localhost', port=9001, stdoutToServer=True, stderrToServer=True, suspend=True)
+#     except ConnectionRefusedError:
+#         pass
+#
 from sys import argv
+from typing import cast
 
+from qualia.config import DEBUG, ATTACH_PYCHARM
+from qualia.config import _ENCRYPTION_USED
 
 # from qualia.utils.perf_utils import perf_imports
 #
 # perf_imports()
-# if True:
-#     from typeguard.importhook import install_import_hook
+# from typeguard.importhook import install_import_hook
 #
-#     install_import_hook('qualia')
+# install_import_hook('qualia')
+
+if _ENCRYPTION_USED:
+    def _fernet_importer() -> None:
+        # Saves about 0.5s
+        from cryptography.fernet import Fernet  # noqa
 
 
-def main():
-    # type: () -> "Qualia"
+    from threading import Thread
+
+    Thread(target=_fernet_importer, name="importer").start()
+
+
+def _get_plugin_class() -> object:
     from importlib.util import find_spec
-    from qualia.config import DEBUG
-
-    if DEBUG:
-        # https://www.jetbrains.com/help/pycharm/remote-debugging-with-product.html#remote-debug-config
-        try:
-            import pydevd_pycharm
-            pydevd_pycharm.settrace('localhost', port=9001, stdoutToServer=True, stderrToServer=True, suspend=False)
-        except Exception as exp:
-            _logger.critical('\n'.join(format_exception(None, exp, exp.__traceback__)))
 
     assert version_info[:2] >= (3, 7), "Use python version equal or higher than 3.7"
 
@@ -33,7 +44,7 @@ def main():
         if not find_spec(package):
             raise ModuleNotFoundError
 
-    return Qualia
+    return cast(object, Qualia)
 
 
 # Detect if loaded as plugin or from external script
@@ -51,13 +62,13 @@ if argv[-1].endswith("qualia") or argv[-1].endswith("__init__.py"):
     _logger = setup_logger()
 
     try:
-        QualiaPlugin = main()
+        QualiaPlugin = _get_plugin_class()
     except ModuleNotFoundError as e:
         _logger.critical("Certain packages are missing " + str(e) + "Attempting installation")
 
         install_dependencies(optional_install_dir, _logger)
 
-        QualiaPlugin = main()
+        QualiaPlugin = _get_plugin_class()
 
         _logger.critical("Certain packages were missing and are now installed. Run :UpdateRemotePlugins again")
     except BaseException as e:

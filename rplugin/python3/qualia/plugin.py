@@ -100,6 +100,8 @@ class Qualia(PluginDriver):
                         cur_context[cur_node_id] or {}) if should_expand else None
                 view = self.line_node_view(0)
                 self.main(view, None)
+                with Database() as db:
+                    db.set_node_view(view, self.file_name_transposed(self.current_buffer_file_path()))
 
     @command("FoldLevel", sync=True, nargs=1)
     def fold_level(self, args: list[str]) -> None:
@@ -141,17 +143,18 @@ class Qualia(PluginDriver):
     def search_nodes(self, query_strings: list[str]) -> None:
         prefixes = normalized_search_prefixes(' '.join(query_strings))
         fzf_lines = matching_nodes_content(prefixes)
-        self.fzf_run(fzf_lines, ' '.join(query_strings))
+        self.fzf_run(fzf_lines, ' '.join(query_strings), False)
 
     @command("ListOrphans", sync=True)
     def list_orphans(self) -> None:
         with Database() as db:
-            orphan_fzf_lines = [fzf_input_line(node_id, db.get_node_content_lines(node_id)) for node_id in
-                                get_orphan_node_ids(db)]
-        self.fzf_run(orphan_fzf_lines, '')
+            orphan_fzf_lines = [fzf_input_line(node_id, db.get_node_content_lines(node_id),
+                                               False if db.get_node_descendants(node_id, True, True) else True)
+                                for node_id in get_orphan_node_ids(db)]
+        self.fzf_run(orphan_fzf_lines, '', True)
 
     @command("RemoveOrphans", sync=True, nargs='?')
-    def remove_orphans(self, args: list[int] = None) -> None:
+    def remove_orphans(self, args: tuple[int] = tuple()) -> None:
         skip_confirm = args and int(args[0])
         if not (skip_confirm or self.nvim.funcs.confirm("Remove orphans?", "&Be kind\n&Yes", 1) == 2):
             return

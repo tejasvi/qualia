@@ -26,11 +26,12 @@ GIT_BRANCH = "main"
 
 NEST_LEVEL_SPACES = 4
 
-DEBUG = True
+DEBUG = False
+ATTACH_PYCHARM = True
 NVIM_DEBUG_PIPE = r'\\.\pipe\nvim-15600-0'  # E.g. nvim --listen \\.\pipe\nvim-15600-0 test.md
 
-QUALIA_DATA_DIR = user_data_dir("qualia")
-QUALIA_CONFIG_DIR = user_config_dir('qualia')
+QUALIA_DATA_DIR: str = user_data_dir("qualia")
+QUALIA_CONFIG_DIR: str = user_config_dir('qualia')
 
 # Adds delay
 ENCRYPT_DB = True
@@ -71,14 +72,19 @@ if not OVERRIDE_ADVANCED_SETTINGS:
 
     _APP_DATA_PATH = Path(QUALIA_DATA_DIR)
 
-    _FILE_FOLDER = _APP_DATA_PATH.joinpath("files")
-    _DB_FOLDER = _APP_DATA_PATH.joinpath("db")
-    _GIT_FOLDER = _APP_DATA_PATH.joinpath("git")
-    _LOG_FOLDER = _APP_DATA_PATH.joinpath('logs')
-    _LOG_FILENAME = _LOG_FOLDER.joinpath('logs.txt')
+
+    def _app_path(name: str) -> Path:
+        return _APP_DATA_PATH.joinpath(name).resolve()
+
+
+    _FILE_FOLDER = _app_path("files")
+    _DB_FOLDER = _app_path("db")
+    _GIT_FOLDER = _app_path("git")
+    _LOG_FOLDER = _app_path('logs')
+    _LOG_FILENAME = _LOG_FOLDER.joinpath('logs.txt').resolve()
 
     # Before starting resets data in QUALIA_DATA_DIR (DEBUG adds '_debug' to the path by default)
-    _RESET_APP_FOLDER = False
+    _RESET_APP_FOLDER = True
 
     for _path in (_FILE_FOLDER, _GIT_FOLDER, _DB_FOLDER, _LOG_FOLDER):
         if _RESET_APP_FOLDER:

@@ -1,6 +1,4 @@
-from base64 import b32encode, b32decode
 from collections import defaultdict
-from math import ceil
 from os.path import basename
 from pathlib import Path
 from sys import executable
@@ -10,15 +8,14 @@ from uuid import UUID
 
 from pynvim import Nvim, NvimError
 
-from qualia.config import NVIM_DEBUG_PIPE, _FZF_LINE_DELIMITER, _TRANSPOSED_FILE_PREFIX, _SHORT_BUFFER_ID, \
-    _SHORT_ID_STORE_BYTES
+from qualia.config import NVIM_DEBUG_PIPE, _FZF_LINE_DELIMITER, _TRANSPOSED_FILE_PREFIX, _SHORT_BUFFER_ID
 from qualia.config import _FILE_FOLDER
 from qualia.database import Database
 from qualia.models import NodeId, DuplicateNodeException, UncertainNodeChildrenException, View, BufferId, LastSync, \
     LineInfo, KeyNotFoundError, BufferFileId
 from qualia.utils.buffer_utils import buffer_to_node_id
 from qualia.utils.common_utils import live_logger, exception_traceback, file_name_to_file_id, buffer_id_decoder, \
-    buffer_id_encoder
+    buffer_id_encoder, compact_base32_encode, compact_base32_decode
 
 if TYPE_CHECKING:
     from pynvim.api import Buffer
@@ -52,26 +49,44 @@ class PluginUtils:
             if "ATTENTION" not in str(e):
                 raise e
 
+    def current_buffer_file_path(self) -> str:
+        return Path(self.nvim.eval("resolve(expand('%:p'))")).resolve().as_posix()
+
     def navigate_node(self, node_id: NodeId, replace_buffer: bool, db: Database) -> None:
         transposed = self.file_name_transposed(self.nvim.current.buffer.name)
         filepath = self.node_id_filepath(node_id, transposed, db)
-        if self.nvim.current.buffer.name != filepath:
+        if Path(self.current_buffer_file_path()) != Path(filepath):
             self.replace_with_file(filepath, replace_buffer)
 
-    def process_filepath(self, buffer_name: str, db: Database, view) -> tuple[bool, bool, NodeId]:
+    def process_view(self, view: View, db: Database) -> tuple[bool, bool, NodeId]:
         switched_buffer = False
         try:
-            main_id, transposed = self.filepath_node_id_transposed(buffer_name, ".q.md", db)
+            cur_main_id, cur_transposed = self.filepath_node_id_transposed(self.current_buffer_file_path(), db)
         except ValueError:
-            main_id, transposed = self.navigate_root_node(buffer_name, db)
             switched_buffer = True
-        if view and main_id != view.main_id:
-            self.navigate_node(view.main_id, True, db)
-            switched_buffer = True
+        else:
+            if not (view.main_id == cur_main_id and view.transposed == cur_transposed):
+                switched_buffer = True
+        if switched_buffer:
+            self.replace_with_file(self.node_id_filepath(view.main_id, view.transposed, db), True)
+        return switched_buffer, view.transposed, view.main_id
+
+    def process_filepath(self, file_path: str, db: Database) -> tuple[bool, bool, NodeId]:
+        switched_buffer = True
+        try:
+            main_id, transposed = self.filepath_node_id_transposed(file_path, db)
+        except ValueError:
+            main_id, transposed = self.navigate_root_node(file_path, db)
+        else:
+            if Path(file_path).parent != _FILE_FOLDER:
+                self.navigate_node(main_id, True, db)
+            else:
+                switched_buffer = False
+
         return switched_buffer, transposed, main_id
 
-    def navigate_root_node(self, buffer_name: str, db: Database) -> tuple[NodeId, bool]:
-        transposed = self.file_name_transposed(buffer_name)
+    def navigate_root_node(self, file_path: str, db: Database) -> tuple[NodeId, bool]:
+        transposed = self.file_name_transposed(file_path)
         root_id = db.get_root_id()
         self.replace_with_file(self.node_id_filepath(root_id, transposed, db), True)
         live_logger.info("Redirecting to root node")
@@ -80,7 +95,7 @@ class PluginUtils:
     def current_buffer_id(self) -> Optional[BufferId]:
         buffer_number: int = self.nvim.current.buffer.number
         try:
-            file_path = self.nvim.eval("resolve(expand('%:p'))")
+            file_path = self.current_buffer_file_path()
         except OSError:
             return None
         else:
@@ -146,10 +161,12 @@ class PluginUtils:
     def line_info(self, line_num: int) -> LineInfo:
         return self.node_ancestory_info(line_num, 1)[0]
 
-    def line_node_view(self, line_num) -> View:
+    def line_node_view(self, line_num: int) -> View:
         line_info = self.line_info(line_num)
         node_id = line_info.node_id
-        view = View(node_id, line_info.parent_view.sub_tree[node_id] if line_info.parent_view.sub_tree else {})
+        view = View(node_id,
+                    line_info.parent_view.sub_tree[node_id] if line_info.parent_view.sub_tree else {},
+                    self.file_name_transposed(self.current_buffer_file_path()))
         return view
 
     def should_continue(self, force: bool) -> bool:
@@ -199,17 +216,18 @@ class PluginUtils:
 
     fzf_sink_command = "NodeFzfSink"
 
-    def fzf_run(self, fzf_lines: list[str], query: str) -> None:
-        self.nvim.call("fzf#run",
-                       {'source': fzf_lines, 'sink': self.fzf_sink_command, 'window': {'width': 0.95, 'height': 0.98},
-                        'options': ['--delimiter', _FZF_LINE_DELIMITER, '--with-nth', '2..', '--query', query,
-                                    '--preview', executable + " " + Path(__file__).parent.parent.joinpath(
-                                'services/preview.py').as_posix() + " {1} 1",
-                                    '--preview-window', ":wrap"]})
+    def fzf_run(self, fzf_lines: list[str], query: str, ansi_escape_codes: bool) -> None:
+        fzf_options = ['--delimiter', _FZF_LINE_DELIMITER, '--with-nth', '2..', '--query', query, '--preview',
+                       executable + " " + Path(__file__).parent.parent.joinpath('services/preview.py').as_posix()
+                       + " {1} 1", '--preview-window', ":wrap"]
+        if ansi_escape_codes:
+            fzf_options.append('--ansi')
+        self.nvim.call("fzf#run", {'source': fzf_lines, 'sink': self.fzf_sink_command,
+                                   'window': {'width': 0.95, 'height': 0.98}, 'options': fzf_options})
 
     @staticmethod
-    def file_name_transposed(file_name: str) -> bool:
-        return basename(file_name)[0] == _TRANSPOSED_FILE_PREFIX
+    def file_name_transposed(file_path: str) -> bool:
+        return basename(file_path)[0] == _TRANSPOSED_FILE_PREFIX
 
     @staticmethod
     def file_name_to_buffer_file_id(full_name: str, extension: str) -> BufferFileId:
@@ -221,11 +239,7 @@ class PluginUtils:
             UUID(file_id)
             return cast(NodeId, file_id)
 
-        # Base32 stores 5 bits per letter. 00000 is represented as 'A'. The value encoded is in bytes (multiple of 8bits)
-        # The length of encoded value will have multiple of 8 characters (8*5 bits representing 5 byte value)
-        unpadded_length = ceil(_SHORT_ID_STORE_BYTES * 8 / 5)
-        padding = (8 - unpadded_length % 8) % 8
-        buffer_id_bytes = b32decode(file_id.rjust(unpadded_length, 'A') + "=" * padding, casefold=True)
+        buffer_id_bytes = compact_base32_decode(file_id)
         buffer_id = buffer_id_encoder(buffer_id_bytes)
         node_id = buffer_to_node_id(buffer_id, db)
         return node_id
@@ -234,17 +248,17 @@ class PluginUtils:
     def node_id_to_buffer_file_id(node_id: NodeId, db: Database) -> BufferFileId:
         buffer_id = db.node_to_buffer_id(node_id)
         buffer_id_bytes = buffer_id_decoder(buffer_id)
-        file_id = cast(BufferFileId, b32encode(buffer_id_bytes).decode().rstrip("=").lstrip('A').lower() or 'a')
+        file_id = cast(BufferFileId, compact_base32_encode(buffer_id_bytes))
         return file_id
 
     @staticmethod
-    def filepath_node_id_transposed(file_path: str, extension: str, db: Database) -> tuple[NodeId, bool]:
+    def filepath_node_id_transposed(file_path: str, db: Database) -> tuple[NodeId, bool]:
         file_name = basename(file_path)
         transposed = PluginUtils.file_name_transposed(file_path)
         if transposed:
             file_name = file_name[1:]
 
-        file_id = PluginUtils.file_name_to_buffer_file_id(file_name, extension)
+        file_id = PluginUtils.file_name_to_buffer_file_id(file_name, ".q.md")
 
         try:
             node_id = PluginUtils.buffer_file_id_to_node_id(file_id, db)

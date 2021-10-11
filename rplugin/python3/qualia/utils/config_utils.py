@@ -2,10 +2,10 @@ from os import PathLike, chmod
 from pathlib import Path
 from shutil import rmtree
 from stat import S_IWRITE
-from typing import Callable, Union
+from typing import Callable, Union, Iterable
 
 
-def create_directory_if_absent(directory_path: Path):
+def create_directory_if_absent(directory_path: Path) -> None:
     try:
         directory_path.mkdir(parents=True, exist_ok=True)
     except FileExistsError:
@@ -14,7 +14,7 @@ def create_directory_if_absent(directory_path: Path):
 
 
 def force_remove_directory(app_folder_path: PathLike) -> None:
-    def onerror(func: Callable, path: Union[PathLike, str], exc_info) -> None:
+    def onerror(func: Callable, path: Union[PathLike, str], exc_info: tuple) -> None:
         if exc_info[0] is FileNotFoundError:
             pass
         else:

@@ -17,7 +17,7 @@ NodeId = NewType("NodeId", str)
 BufferId = Tuple[int, str]
 BufferFileId = NewType("BufferFileId", str)
 BufferNodeId = NewType("BufferNodeId", str)
-Tree = Dict[NodeId, Optional[dict]]
+Tree = dict[NodeId, Optional[dict]]
 LineRange = Tuple[int, int]
 AstMap = Tuple[int, int]
 El = NewType("El", list[str])
@@ -34,6 +34,7 @@ class DbClient(TypedDict):
 class View:
     main_id: NodeId
     sub_tree: Optional[Tree]
+    transposed: bool
 
 
 class ProcessState:

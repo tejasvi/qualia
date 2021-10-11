@@ -35,10 +35,11 @@ class PluginDriver(PluginUtils):
             current_buffer: Buffer = self.nvim.current.buffer
 
             with Database() as db:
-                buffer_name = current_buffer.name
-                if buffer_name == '':
+                buffer_file_path = self.current_buffer_file_path()
+                if buffer_file_path == '':
                     return
-                switched_buffer, transposed, main_id = self.process_filepath(buffer_name, db, view)
+                switched_buffer, transposed, main_id = (
+                    self.process_filepath(buffer_file_path, db) if view is None else self.process_view(view, db))
                 if switched_buffer:
                     return
                 buffer_id = self.current_buffer_id()
@@ -55,8 +56,8 @@ class PluginDriver(PluginUtils):
                         while True:
                             try:
                                 buffer_lines = cast(Li, list(current_buffer))
-                                root_view = view or sync_buffer(buffer_lines, main_id, last_sync, db, transposed,
-                                                                self.realtime_session, self.git_sync_event)
+                                root_view = sync_buffer(buffer_lines, main_id, last_sync, db, transposed,
+                                                        self.realtime_session, self.git_sync_event)
                                 break
                             except RecursionError:
                                 if self.nvim.funcs.confirm("Too many nodes may lead to crash on slow hardware.",

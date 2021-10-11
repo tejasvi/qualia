@@ -40,7 +40,7 @@ else:
     system = sys.platform
 
 
-def user_data_dir(appname=None, appauthor=None, version=None, roaming=False):
+def user_data_dir(appname=None, appauthor=None, version=None, roaming=False) -> str:
     r"""Return full path to the user-specific data dir for this application.
 
         "appname" is the name of application.
@@ -161,7 +161,7 @@ def site_data_dir(appname=None, appauthor=None, version=None, multipath=False):
     return path
 
 
-def user_config_dir(appname=None, appauthor=None, version=None, roaming=False):
+def user_config_dir(appname=None, appauthor=None, version=None, roaming=False) -> str:
     r"""Return full path to the user-specific config dir for this application.
 
         "appname" is the name of application.
@@ -512,9 +512,8 @@ def _get_win_folder_with_ctypes(csidl_name):
 
 def _get_win_folder_with_jna(csidl_name):
     import array
-    from com.sun import jna  # noqa
-    from com.sun.jna.platform import win32  # noqa
-
+    from com.sun import jna # noqa
+    from com.sun.jna.platform import win32 # noqa
     buf_size = win32.WinDef.MAX_PATH * 2
     buf = array.zeros('c', buf_size)  # noqa
     shell = win32.Shell32.INSTANCE

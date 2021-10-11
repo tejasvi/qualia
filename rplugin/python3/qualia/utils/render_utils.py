@@ -32,11 +32,16 @@ def get_replace_buffer_line(nvim):
     return replace_buffer_line
 
 
+def buffer_lines(buffer):
+    # type:(Buffer) -> Li
+    return cast(Li, list(buffer) or [''])
+
+
 def render_buffer(buffer, new_content_lines, nvim):
     # type:(Buffer, Li, Nvim) -> Li
-    old_content_lines = cast(Li, list(buffer))
-    # Pre-Check common state with == (100x faster than loop)
-    if old_content_lines != new_content_lines:
+    old_content_lines = buffer_lines(buffer)
+    # Pre-Check common state with '==' -> 100x faster than loop
+    if (old_content_lines or new_content_lines != ['']) and old_content_lines != new_content_lines:
         new_cursor_column = None
 
         line_conflict = True
@@ -88,7 +93,7 @@ def render_buffer(buffer, new_content_lines, nvim):
             nvim.command(f"call setpos('.', [0, getcurpos()[1], {new_cursor_column}, 0])")
     if DEBUG:
         try:
-            assert new_content_lines == list(buffer)
+            assert new_content_lines == buffer_lines(buffer)
         except AssertionError as e:
             raise e
             # buffer[:] = old_content_lines

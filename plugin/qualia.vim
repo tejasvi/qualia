@@ -24,8 +24,24 @@ function! qualia#search_input_query()
     execute ':SearchQualia '.qualia#user_input("Search: ")
 endfunction
 
+fun! s:MoveCursorConcealOffset()
+    if &conceallevel == 2
+        let [line_number, column_number] = getcurpos()[1:2]
+        let line_content = getline('.')
+        let conceal_begin_col = match(line_content, '[+*-.] \[\](.\+)  ')
+        if conceal_begin_col >= 0 && column_number > conceal_begin_col
+            call setpos('.', [0, line_number, column_number + 2, 0])
+        endif
+    endif
+endfun
+
+" https://github.com/jupyterhub/binderhub/issues/741
+" https://github.com/ian-r-rose/binder-workspace-demo
 
 if !(exists('g:qualia_no_keymap') && g:qualia_no_keymap)
+    nnoremap <LeftMouse> <LeftMouse>:call <SID>MoveCursorConcealOffset()\|echo ''<CR>
+    inoremap <LeftMouse> <Esc><LeftMouse>:echo 'Normal Mode'<CR>
+
     if !exists('g:qualia_prefix_key')
         let g:qualia_prefix_key='<Leader>'
     endif
@@ -36,8 +52,12 @@ if !(exists('g:qualia_no_keymap') && g:qualia_no_keymap)
             for i in range(1, 9)
                 call add(maplist, i.' :FoldLevel '.i)
             endfor
+            call map(maplist, 'g:qualia_prefix_key.v:val')
+
+            call extend(maplist, ['<2-LeftMouse> :ToggleFold', '<3-LeftMouse> :FoldLevel 9', '<RightMouse> <LeftMouse>:TransposeNode'])
+
             for mapstr in maplist
-                execute 'nnoremap <unique><buffer><silent>'.g:qualia_prefix_key.mapstr.'<CR>'
+                execute 'nnoremap <unique><buffer><silent>'.mapstr.'<CR>'
             endfor
             let b:qualia_key_map=1
         endif
@@ -54,7 +74,7 @@ function! qualia#pretty_id()
                                 \['\n\s*- \[]([nN].\{-})\zs \ze '    , '•'],
                                 \['\n\s*+ \[]([nN].\{-})\zs \ze '    , '‣'],
                                 \['\n\s*1[.)] \[]([nN].\{-})\zs \ze ', '│'],
-                                \['\n\s*- \[]([tT].\{-})\zs \ze '    , '●'],
+                                \['\n\s*- \[[tT].\{-})\zs \ze '    , '●'],
                                 \['\n\s*+ \[]([tT].\{-})\zs \ze '    , '▶'],
                                 \['\n\s*1[.)] \[]([tT].\{-})\zs \ze ', '┃'],
                                 \['\n\s*\zs1[.)]\ze \[]([tnTN].\{-})', ' '],
@@ -72,7 +92,7 @@ autocmd VimEnter,WinEnter,BufEnter *.q.md call qualia#pretty_id()
 function! FilterQualiaFiles()
     let new_oldfiles = []
     for v_file in v:oldfiles
-        if v_file !~ '.\{8\}\(-.\{4\}\)\{3\}-.\{12\}\.q\.md$'
+        if v_file !~ '\.q\.md$'
             call add(new_oldfiles, v_file)
         endif
     endfor
@@ -82,5 +102,5 @@ autocmd VimEnter,BufNew *.q.md call FilterQualiaFiles()
 
 autocmd VimEnter,WinEnter,TextChanged,FocusGained,BufEnter,InsertLeave,BufLeave,BufFilePost,BufAdd,CursorHold *.q.md TriggerSync 1
 autocmd BufEnter *.q.md setlocal filetype=markdown
-autocmd WinEnter *.q.md set nofoldenable
+autocmd VimEnter,WinEnter *.q.md set nofoldenable
 "ॱᐧᣟ⋅⸪⸫⸬⸭⸱ꜗꜘꜙ𑁉𑁊

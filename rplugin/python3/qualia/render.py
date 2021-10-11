@@ -48,7 +48,8 @@ def get_buffer_lines_from_view(buffer_view: View, db: Database, transposed: bool
     last_sync = LastSync()
     buffer_lines = cast(Li, [])
     stack: list[tuple[NodeId, View, int, int, bool, int]] = [(buffer_view.main_id, View(cast(NodeId, InvalidNodeId()), {
-        buffer_view.main_id: {} if buffer_view.sub_tree is None else buffer_view.sub_tree}), -1, 0, False, 1)]
+        buffer_view.main_id: {} if buffer_view.sub_tree is None else buffer_view.sub_tree}, transposed), -1, 0, False,
+                                                              1)]
     while stack:
         cur_node_id, parent_view, previous_indent_level, cur_nest_level, previously_ordered, parent_sibling_count = stack.pop()
 
@@ -87,7 +88,7 @@ def get_buffer_lines_from_view(buffer_view: View, db: Database, transposed: bool
                     descendant_ids):
                 stack.append(
                     (
-                        descendant_node_id, View(cur_node_id, descendant_context), current_indent_level,
+                        descendant_node_id, View(cur_node_id, descendant_context, transposed), current_indent_level,
                         cur_nest_level + 1,
                         ordered, len(cur_context)))
 

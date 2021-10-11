@@ -58,7 +58,7 @@ class ParseProcess:
         self._process_list_item_ast(buffer_ast, buffer_tree, iter([]), last_sync)
 
         data = buffer_tree.popitem()
-        root_view = View(*data)
+        root_view = View(*data, transposed)
         return root_view, self._changes
 
     def _process_list_item_ast(self, list_item_ast, tree, ordered_descendant_asts, last_sync):

@@ -1,4 +1,3 @@
-from multiprocessing.connection import Connection, Client
 from os import environ
 from sys import argv
 from typing import Optional, TYPE_CHECKING, cast
@@ -6,6 +5,7 @@ from typing import Optional, TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from qualia.models import NodeId, Li
     from qualia.database import Database
+    from multiprocessing.connection import Connection
 
 
 def get_descendant_preview_lines(node_id, db, transposed, separator_width, max_level):
@@ -99,7 +99,9 @@ def parse_args() -> tuple[bool, str, int, int]:
     return attach_running_process, node_id_arg, output_width, output_height
 
 
-def connect_listener() -> Optional[Connection]:
+def connect_listener():
+    # type: () -> Optional[Connection]
+    from multiprocessing.connection import Client
     try:
         return Client(('localhost', 1200))
     except ConnectionRefusedError as e:

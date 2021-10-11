@@ -1,4 +1,3 @@
-from secrets import token_urlsafe
 from typing import Union, cast, Iterable, Optional, Dict
 
 from bloomfilter import BloomFilter
@@ -16,7 +15,8 @@ from qualia.utils.database_utils import LMDB
 class _DbDescendants(LMDB):
     def get_node_descendants(self, node_id: NodeId, transposed: bool, discard_invalid: bool) -> OrderedSet[NodeId]:
         node_descendants = cast(OrderedSet[NodeId], OrderedSet(
-            self._get_key_val(node_id, self._cursors.parents if transposed else self._cursors.children, False) or []))
+            LMDB._get_key_val(node_id, self._cursors.parents if transposed else self._cursors.children, False,
+                              False) or []))
         if not discard_invalid:
             return node_descendants
         to_remove = set()
@@ -32,11 +32,11 @@ class _DbDescendants(LMDB):
 
     def _set_node_descendants_value(self, descendant_ids: OrderedSet[NodeId], node_id: NodeId,
                                     transposed: bool) -> None:
-        self._set_key_val(node_id, list(descendant_ids),
+        LMDB._set_key_val(node_id, list(descendant_ids),
                           self._cursors.parents if transposed else self._cursors.children,
                           True)
         if not transposed:
-            self._set_key_val(node_id, True, self._cursors.unsynced_children, True)
+            LMDB._set_key_val(node_id, True, self._cursors.unsynced_children, True)
 
     def set_node_descendants(self, node_id: NodeId, descendant_ids: OrderedSet[NodeId], transposed: bool):
         # Order important. (get then set)
@@ -63,7 +63,7 @@ class _DbDescendants(LMDB):
 
 class _DbContent(LMDB):
     def _get_db_node_content_lines(self, node_id: NodeId) -> Union[El, Li]:
-        db_value = cast(El, self._get_key_val(node_id, self._cursors.content, True))
+        db_value = cast(El, LMDB._get_key_val(node_id, self._cursors.content, True, False))
         return db_value
 
     def get_node_content_lines(self, node_id: NodeId) -> Li:
@@ -72,14 +72,14 @@ class _DbContent(LMDB):
         return db_value
 
     def set_node_content_lines(self, node_id: NodeId, content_lines: Li, ) -> None:
-        self._set_key_val(node_id, encrypt_lines(content_lines) if ENCRYPT_DB else content_lines, self._cursors.content,
+        LMDB._set_key_val(node_id, encrypt_lines(content_lines) if ENCRYPT_DB else content_lines, self._cursors.content,
                           True)
-        self._set_key_val(node_id, True, self._cursors.unsynced_content, True)
+        LMDB._set_key_val(node_id, True, self._cursors.unsynced_content, True)
         if self._cursors.bloom_filters.set_key(node_id.encode()):
             self._cursors.bloom_filters.delete()
 
     def toggle_encryption(self) -> None:
-        for node_id in self._cursor_keys(self._cursors.content):
+        for node_id in LMDB._cursor_keys(self._cursors.content):
             node_id = cast(NodeId, node_id)
             db_content_lines = self._get_db_node_content_lines(node_id)
             if ENCRYPT_DB:
@@ -88,21 +88,22 @@ class _DbContent(LMDB):
                 db_content_lines = cast(El, db_content_lines)
                 content_lines = decrypt_lines(db_content_lines)
             self.set_node_content_lines(node_id, content_lines)
-        for _node_id in self._cursor_keys(self._cursors.bloom_filters):
+        for _node_id in LMDB._cursor_keys(self._cursors.bloom_filters):
             self._cursors.bloom_filters.delete()
-        self._set_key_val(_DB_ENCRYPTION_ENABLED_KEY, bool(ENCRYPT_DB), self._cursors.metadata, True)
+        LMDB._set_key_val(_DB_ENCRYPTION_ENABLED_KEY, bool(ENCRYPT_DB), self._cursors.metadata, True)
 
 
 class _DBView(LMDB):
     def get_node_view(self, node_id: NodeId, transposed: bool) -> View:
-        return View(node_id, cast(Optional[Tree], self._get_key_val(
-            node_id, self._cursors.transposed_views if transposed else self._cursors.views, False)) or {})
+        return View(node_id, cast(Optional[Tree], LMDB._get_key_val(node_id,
+                                                                    self._cursors.transposed_views if transposed else self._cursors.views,
+                                                                    False, False)) or {}, transposed)
 
     def set_node_view(self, view: View, transposed: bool) -> None:
-        self._set_key_val(view.main_id, cast(Optional[dict[str, object]], view.sub_tree),
+        LMDB._set_key_val(view.main_id, cast(Optional[dict[str, object]], view.sub_tree),
                           self._cursors.transposed_views if transposed else self._cursors.views, True)
         if not transposed:
-            self._set_key_val(view.main_id, True, self._cursors.unsynced_views, True)
+            LMDB._set_key_val(view.main_id, True, self._cursors.unsynced_views, True)
 
 
 class _DbUnsynced(LMDB):
@@ -112,20 +113,19 @@ class _DbUnsynced(LMDB):
                 cursor.delete()
 
     def pop_if_unsynced_children(self, node_id: NodeId) -> bool:
-        return self._pop_if_exists(self._cursors.unsynced_children, node_id)
+        return LMDB._pop_if_exists(self._cursors.unsynced_children, node_id)
 
     def pop_if_unsynced_content(self, node_id: NodeId) -> bool:
-        return self._pop_if_exists(self._cursors.unsynced_content, node_id)
+        return LMDB._pop_if_exists(self._cursors.unsynced_content, node_id)
 
 
 class _DbNodeIds(LMDB):
     def buffer_id_bytes_to_node_id(self, buffer_id_bytes) -> NodeId:
-        return cast(NodeId, self._get_key_val(buffer_id_bytes, self._cursors.buffer_id_bytes_node_id, True))
+        return cast(NodeId, LMDB._get_key_val(buffer_id_bytes, self._cursors.buffer_id_bytes_node_id, True, False))
 
     def node_to_buffer_id(self, node_id: NodeId) -> BufferNodeId:
-        buffer_node_id = cast(Optional[BufferNodeId],
-                              self._get_key_val(node_id, self._cursors.node_id_buffer_id, False))
-        if buffer_node_id is None:
+        buffer_id_bytes = LMDB._get_key_val(node_id, self._cursors.node_id_buffer_id, False, True)
+        if buffer_id_bytes is None:
             if self._cursors.buffer_id_bytes_node_id.last():
                 last_buffer_id_bytes = self._cursors.buffer_id_bytes_node_id.key()
                 new_counter = int.from_bytes(last_buffer_id_bytes, 'big') + 1
@@ -134,34 +134,36 @@ class _DbNodeIds(LMDB):
                 buffer_id_bytes = (0).to_bytes(_SHORT_ID_STORE_BYTES, 'big')
             # base65536 doesn't output brackets https://qntm.org/safe
             # base65536 gives single character for 16bits == 2bytes
-            # use base64 instead of base65536.encode since misplaced cursor when concealing wide characters
+            # use ascii base instead of base65536.encode since misplaced cursor when concealing wide characters
             # https://github.com/neovim/neovim/issues/15565
             # Base64 stores 6 bits per letter. 000000 is represented as 'A'
-            buffer_node_id = buffer_id_encoder(buffer_id_bytes)
-            self._set_key_val(node_id, buffer_node_id, self._cursors.node_id_buffer_id, True)
-            self._set_key_val(buffer_id_bytes, node_id, self._cursors.buffer_id_bytes_node_id, True)
+            LMDB._set_key_val(node_id, buffer_id_bytes, self._cursors.node_id_buffer_id, True)
+            LMDB._set_key_val(buffer_id_bytes, node_id, self._cursors.buffer_id_bytes_node_id, True)
+
+        buffer_node_id = buffer_id_encoder(buffer_id_bytes)
         return cast(BufferNodeId, buffer_node_id)
 
     def get_node_ids(self) -> list[NodeId]:
         self._cursors.content.first()
-        return [cast(NodeId, node_id) for node_id in self._cursor_keys(self._cursors.content)]
+        return [cast(NodeId, node_id) for node_id in LMDB._cursor_keys(self._cursors.content)]
 
 
 class _DbMeta(LMDB):
     def get_root_id(self) -> NodeId:
-        return cast(NodeId, self._get_key_val(_ROOT_ID_KEY, self._cursors.metadata, True))
+        return cast(NodeId, LMDB._get_key_val(_ROOT_ID_KEY, self._cursors.metadata, True, False))
 
     def set_root_id(self, root_id: NodeId) -> None:
-        self._set_key_val(_ROOT_ID_KEY, root_id, self._cursors.metadata, False)
+        LMDB._set_key_val(_ROOT_ID_KEY, root_id, self._cursors.metadata, False)
 
     def db_encrypted(self) -> bool:
-        return bool(self._get_key_val(_DB_ENCRYPTION_ENABLED_KEY, self._cursors.metadata, False))
+        return bool(LMDB._get_key_val(_DB_ENCRYPTION_ENABLED_KEY, self._cursors.metadata, False, False))
 
     def get_set_client(self) -> DbClient:
-        db_client_data = cast(dict, self._get_key_val(_CLIENT_KEY, self._cursors.metadata, False))
+        db_client_data = cast(dict, LMDB._get_key_val(_CLIENT_KEY, self._cursors.metadata, False, False))
         if db_client_data is None:
+            from secrets import token_urlsafe
             client_details = DbClient(client_id=str(get_uuid()), client_name=f"nvim:{token_urlsafe(1)}")
-            self._set_key_val(_CLIENT_KEY, cast(Dict, client_details), self._cursors.metadata, False)
+            LMDB._set_key_val(_CLIENT_KEY, cast(Dict, client_details), self._cursors.metadata, False)
         else:
             client_details = DbClient(client_id=db_client_data["client_id"], client_name=db_client_data["client_name"])
         return client_details

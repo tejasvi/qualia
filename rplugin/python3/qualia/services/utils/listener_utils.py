@@ -1,11 +1,12 @@
-from multiprocessing.connection import Listener
 from random import Random
 from time import sleep
-from typing import Iterator, Optional
-
-from psutil import Process
+from typing import Iterator, Optional, TYPE_CHECKING
 
 from qualia.utils.common_utils import live_logger
+
+if TYPE_CHECKING:
+    from psutil import Process
+    from multiprocessing.connection import Listener
 
 _seeded_random = Random(923487)
 
@@ -15,7 +16,9 @@ def deterministic_random_ephemeral_ports(max_count: int) -> Iterator[int]:
         yield _seeded_random.randrange(49152, 65536)
 
 
-def create_listener() -> Listener:
+def create_listener():
+    # type: () -> Listener
+    from multiprocessing.connection import Listener
     _LISTENER_PORT = 1200
     while True:
         try:
@@ -32,7 +35,8 @@ def create_listener() -> Listener:
     return listener
 
 
-def find_port_process(port: int) -> Optional[Process]:
+def find_port_process(port):
+    # type: (int) -> Optional[Process]
     from psutil import process_iter
     for proc in process_iter():
         for conns in proc.connections(kind='inet'):

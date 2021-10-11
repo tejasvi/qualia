@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import binascii
 from functools import cache
 from re import compile
 from typing import cast, Optional, TYPE_CHECKING, Callable, Sequence
@@ -8,8 +9,8 @@ from uuid import UUID
 from qualia.config import _COLLAPSED_BULLET, _TO_EXPAND_BULLET, _SHORT_BUFFER_ID
 from qualia.database import Database
 from qualia.models import NODE_ID_ATTR, Tree, NodeId, BufferNodeId, DuplicateNodeException, LastSync, \
-    UncertainNodeChildrenException, AstMap, Li
-from qualia.utils.common_utils import get_time_uuid, buffer_id_decoder, removeprefix
+    UncertainNodeChildrenException, AstMap, Li, KeyNotFoundError
+from qualia.utils.common_utils import get_time_uuid, buffer_id_decoder, removeprefix, InvalidBufferNodeIdError
 
 if TYPE_CHECKING:
     from markdown_it.tree import SyntaxTreeNode
@@ -31,9 +32,12 @@ def get_md_ast(content_lines: Li) -> SyntaxTreeNode:
     return root_ast
 
 
-def buffer_to_node_id(buffer_id: BufferNodeId, db: Database) -> NodeId:
-    buffer_id_bytes = buffer_id_decoder(buffer_id)
-    node_id = db.buffer_id_bytes_to_node_id(buffer_id_bytes)
+def buffer_to_node_id(buffer_node_id: BufferNodeId, db: Database) -> NodeId:
+    buffer_id_bytes = buffer_id_decoder(buffer_node_id)
+    try:
+        node_id = db.buffer_id_bytes_to_node_id(buffer_id_bytes)
+    except (KeyNotFoundError, binascii.Error):
+        raise InvalidBufferNodeIdError(buffer_node_id)
     return node_id
 
 

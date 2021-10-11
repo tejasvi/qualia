@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from base64 import urlsafe_b64encode, b64decode, b64encode
+from base64 import urlsafe_b64encode, b64decode, b64encode, b32decode, b32encode
 from bisect import bisect_left, insort
 from hashlib import sha256
 from json import dumps
@@ -8,7 +8,6 @@ from logging import getLogger
 from math import ceil
 from os import PathLike
 from re import split
-from secrets import token_bytes
 from subprocess import run, CalledProcessError
 from threading import Thread
 from time import time_ns
@@ -18,7 +17,7 @@ from uuid import UUID, uuid4
 
 from qualia.config import _GIT_FOLDER, _LOGGER_NAME, _TRANSPOSED_FILE_PREFIX, \
     _CONFLICT_MARKER, _ENCRYPTION_KEY_FILE, _ENCRYPTION_USED, _SHORT_ID_STORE_BYTES, DEBUG
-from qualia.models import NodeId, CustomCalledProcessError, El, Li, BufferNodeId
+from qualia.models import NodeId, CustomCalledProcessError, El, Li, BufferNodeId, KeyNotFoundError
 from qualia.services.backup import removesuffix
 
 if TYPE_CHECKING:
@@ -26,6 +25,7 @@ if TYPE_CHECKING:
 
 
 def get_time_uuid() -> NodeId:
+    from secrets import token_bytes
     left_padded_time = (time_ns() // 10 ** 6).to_bytes(6, "big")
     id_bytes = left_padded_time + token_bytes(10)
     return cast(NodeId, str(UUID(bytes=id_bytes)))
@@ -175,17 +175,40 @@ def trigger_buffer_change(nvim):
                     async_=True)
 
 
-def buffer_id_decoder(buffer_id: BufferNodeId) -> bytes:
+def compact_base32_decode(string: str) -> bytes:
+    # Base32 stores 5 bits per letter. 00000 is represented as 'A'. The value encoded is in bytes (multiple of 8bits)
+    # The length of encoded value will have multiple of 8 characters (8*5 bits representing 5 byte value)
+    unpadded_length = ceil(_SHORT_ID_STORE_BYTES * 8 / 5)
+    padding = (8 - unpadded_length % 8) % 8  # Need to be exact
+    byte_string = b32decode(string.rjust(unpadded_length, 'A') + "=" * padding, casefold=True)
+    return byte_string
+
+
+def compact_base32_encode(byte_string: bytes) -> str:
+    return b32encode(byte_string).decode().rstrip("=").lstrip('A') or 'A'
+
+
+def compact_base64_decode(string: str) -> bytes:
     # Base64 stores 6 bits per letter. 000000 is represented as 'A'
-    return b64decode(buffer_id.rjust(ceil(_SHORT_ID_STORE_BYTES * 8 / 6), 'A') + "==")  # base65536.decode
+    unpadded_length = ceil(_SHORT_ID_STORE_BYTES * 8 / 6)
+    padding = 2  # Extra '=' padding is ignored
+    byte_string = b64decode(string.rjust(unpadded_length, 'A') + "=" * padding, validate=True)
+    return byte_string
 
 
-absent_node_content_lines = cast(Li, [''])
+def compact_base64_encode(byte_string: bytes) -> str:
+    return b64encode(byte_string).decode().rstrip("=").lstrip('A') or 'A'
+
+
+def buffer_id_decoder(buffer_id: BufferNodeId) -> bytes:
+    return compact_base32_decode(buffer_id)
 
 
 def buffer_id_encoder(buffer_id_bytes: bytes) -> BufferNodeId:
-    buffer_id = cast(BufferNodeId, b64encode(buffer_id_bytes).decode().rstrip("=").lstrip('A') or 'A')
-    return buffer_id
+    return cast(BufferNodeId, compact_base32_encode(buffer_id_bytes))
+
+
+absent_node_content_lines = cast(Li, [''])
 
 
 def removeprefix(input_string: str, suffix: str) -> str:
@@ -193,3 +216,10 @@ def removeprefix(input_string: str, suffix: str) -> str:
     if suffix and input_string.startswith(suffix):
         return input_string[len(suffix):]
     return input_string
+
+
+class InvalidBufferNodeIdError(KeyNotFoundError):
+    def __init__(self, buffer_node_id: BufferNodeId):
+        live_logger.critical(f'Invalid buffer node ID: "{buffer_node_id}"'
+                             + '. Modified hidden node ID by any chance?')
+        super().__init__(buffer_node_id)

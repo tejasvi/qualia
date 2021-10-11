@@ -65,17 +65,21 @@ def fetch_from_remote() -> list[str]:
         try:
             cd_run_git_cmd(["merge-base", "--is-ancestor", "FETCH_HEAD", "HEAD"])
         except CustomCalledProcessError:
-            commit_hash_before_merge = cd_run_git_cmd(["rev-parse", "HEAD"])
             try:
-                cd_run_git_cmd(["merge", "FETCH_HEAD"])
+                commit_hash_before_merge = cd_run_git_cmd(["rev-parse", "HEAD"])
+            except CustomCalledProcessError:
+                commit_hash_before_merge = None
+            try:
+                cd_run_git_cmd(["merge", "FETCH_HEAD", "--allow-unrelated-histories"])
             except GitMergeError as exp:
                 raise exp
+                # Auto commit merge conflicts?
                 # if cd_run_git_cmd(["ls-files", "-u"]):
                 #     cd_run_git_cmd(["commit", "-A", "Merge  conflicts"])
                 # else:
                 #     raise exp
             else:
-                changed_file_names = cd_run_git_cmd(
+                changed_file_names = _GIT_FOLDER.glob("*.q.md") if commit_hash_before_merge is None else cd_run_git_cmd(
                     ["diff", "--name-only", commit_hash_before_merge, "FETCH_HEAD"]).splitlines()
                 return changed_file_names
     return []
