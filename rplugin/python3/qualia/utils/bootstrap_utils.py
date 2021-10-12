@@ -73,7 +73,7 @@ def bootstrap() -> None:
     with Database() as db:
         setup_encryption(db)
         client_data = db.get_set_client()
-        StartLoggedThread(target=lambda: setup_repository(client_data), name="SetupRepo")
+        StartLoggedThread(target=lambda: setup_repository(client_data), name="SetupRepo", delay_seconds=0)
         ensure_root_node(db)
-    StartLoggedThread(target=backup_db, name="BackupDB")
-    StartLoggedThread(target=RpcListenExternal, name="RPClistener")
+    StartLoggedThread(target=backup_db, name="BackupDB", delay_seconds=2)
+    StartLoggedThread(target=RpcListenExternal, name="RPClistener", delay_seconds=2)

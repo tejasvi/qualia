@@ -43,18 +43,18 @@ class Qualia(PluginDriver):
             db.set_node_view(view, self.file_name_transposed(self.nvim.current.buffer.name))
             self.navigate_node(view.main_id, True, db)
 
-    @command("ToggleBufferSync", sync=True)
+    @command("ToggleQualia", sync=True)
     def toggle_parser(self) -> None:
         self.enabled = not self.enabled
         if self.enabled:
             self.trigger_sync(True)
-        live_logger.info("Buffer sync paused" if self.enabled else "Buffer sync enabled")
+        live_logger.info("Qualia enabled" if self.enabled else "Qualia paused")
 
-    @command("PromoteNode", sync=True)  # TODO: Range
+    @command("PromoteNode", sync=True)  # TODO: Range and preserve view
     def promote_node(self) -> None:
         current_line_number = self.current_line_number()
         try:
-            ancestory = self.node_ancestory_info(current_line_number, 2)
+            ancestory = self.view_node_path(current_line_number, 2)
             cur_line_info = ancestory[0]
             assert cur_line_info.nested_level >= 2
         except Exception as e:
@@ -78,6 +78,8 @@ class Qualia(PluginDriver):
             parent_node_siblings_list.insert(parent_node_siblings_list.index(parent_id) + 1, cur_node_id)
             db.set_node_descendants(grandparent_id, OrderedSet(parent_node_siblings_list), transposed)
 
+            # Preserve expanded state: restore view
+
         self.trigger_sync(True)
 
     @command("ToggleFold", sync=True, nargs='?')
@@ -100,8 +102,6 @@ class Qualia(PluginDriver):
                         cur_context[cur_node_id] or {}) if should_expand else None
                 view = self.line_node_view(0)
                 self.main(view, None)
-                with Database() as db:
-                    db.set_node_view(view, self.file_name_transposed(self.current_buffer_file_path()))
 
     @command("FoldLevel", sync=True, nargs=1)
     def fold_level(self, args: list[str]) -> None:

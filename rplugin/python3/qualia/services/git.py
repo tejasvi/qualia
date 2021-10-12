@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from glob import glob
 from pathlib import Path
 from sys import path, argv
 from uuid import UUID
@@ -19,7 +18,7 @@ from qualia.utils.common_utils import cd_run_git_cmd, file_name_to_file_id, live
     exception_traceback, conflict, trigger_buffer_change
 from qualia.database import Database
 from qualia.services.utils.git_utils import create_markdown_file, repository_file_to_content_children, \
-    GitInit
+    GitInit, node_git_filepath
 
 if TYPE_CHECKING:
     from pynvim import Nvim
@@ -27,6 +26,9 @@ if TYPE_CHECKING:
 
 def sync_with_git(nvim):
     # type:(Optional[Nvim]) -> None
+    """
+    Invariant: State of git repository is synced with DB before starting git sync.
+    """
     live_logger.debug("Git sync started")
     assert repository_setup.wait(60), "Repository setup not yet finished"
     try:
@@ -117,12 +119,12 @@ def directory_to_db(db: Database, changed_file_names: list[str], repository_encr
 
 def sync_git_to_db(changed_nodes: GitChangedNodes, db: Database) -> None:
     for cur_node_id, (children_ids, content_lines) in changed_nodes.items():
-        if db.pop_if_unsynced_children(cur_node_id):
+        if db.if_unsynced_children(cur_node_id):
             db_children_ids = db.get_node_descendants(cur_node_id, False, True)
             children_ids.update(db_children_ids)
         db.set_node_descendants(cur_node_id, children_ids, False)
 
-        if db.pop_if_unsynced_content(cur_node_id):
+        if db.if_unsynced_content(cur_node_id):
             try:
                 db_content_lines = db.get_node_content_lines(cur_node_id)
             except KeyNotFoundError:
@@ -133,19 +135,16 @@ def sync_git_to_db(changed_nodes: GitChangedNodes, db: Database) -> None:
 
 
 def db_to_directory(db: Database, repository_encrypted: bool) -> None:
-    existing_markdown_file_paths = glob(_GIT_FOLDER.as_posix() + "/*.md")
-    for md_file_path in existing_markdown_file_paths:
-        Path(md_file_path).unlink()
-
-    root_id = db.get_root_id()
-    visited = {root_id}
-    node_stack = [root_id]
-    while node_stack:
-        node_id = node_stack.pop()
-        valid_node_children_ids = create_markdown_file(db, node_id, repository_encrypted)
-        db.delete_unsynced_content_children(node_id)
-        node_stack.extend(valid_node_children_ids.difference(visited))
-        visited.update(valid_node_children_ids)
+    modified_node_ids = set()
+    for node_id in db.pop_unsynced_node_ids():
+        if db.is_valid_node(node_id):
+            modified_node_ids.add(node_id)
+        else:
+            node_git_filepath(node_id).unlink(missing_ok=True)
+            parents = db.get_node_descendants(node_id, True, True)
+            modified_node_ids.update(parents)
+    for node_id in modified_node_ids:
+        create_markdown_file(db, node_id, repository_encrypted)
 
 
 if __name__ == "__main__" and argv[-1].endswith("git.py"):

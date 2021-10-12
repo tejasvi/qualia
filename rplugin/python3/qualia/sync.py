@@ -8,7 +8,7 @@ from typing import cast, Union, TYPE_CHECKING, Iterator
 from orderedset import OrderedSet
 
 from qualia.database import Database
-from qualia.models import View, NodeId, LastSync, Li, ProcessState, Tree, NODE_ID_ATTR, AstMap
+from qualia.models import View, NodeId, LastSync, Li, ProcessState, Tree, NODE_ID_ATTR, AstMap, DbRender
 from qualia.services.realtime import Realtime
 from qualia.services.utils.realtime_utils import sync_with_realtime_db
 from qualia.utils.buffer_utils import get_md_ast, get_id_line, get_ast_sub_lists, raise_if_duplicate_sibling, \
@@ -37,12 +37,12 @@ def sync_buffer(buffer_lines: Li, main_id: NodeId, last_sync: LastSync, db: Data
 class ParseProcess:
     _lines: Li
     _changes: ProcessState
-    db: Database
+    db: DbRender
 
     def __init__(self) -> None:
         pass
 
-    def process_lines(self, lines: Li, main_id: NodeId, last_sync: LastSync, db: Database, transposed) -> tuple[
+    def process_lines(self, lines: Li, main_id: NodeId, last_sync: LastSync, db: DbRender, transposed) -> tuple[
         View, ProcessState]:
         if not lines:
             lines = cast(Li, [''])

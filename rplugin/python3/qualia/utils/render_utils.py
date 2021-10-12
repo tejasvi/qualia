@@ -2,8 +2,7 @@ from difflib import SequenceMatcher
 from typing import Iterator, Union, cast, Optional, TYPE_CHECKING
 
 from qualia.config import DEBUG, _EXPANDED_BULLET, _COLLAPSED_BULLET, NEST_LEVEL_SPACES, _SHORT_BUFFER_ID
-from qualia.database import Database
-from qualia.models import NodeId, BufferContentSetter, Li
+from qualia.models import NodeId, BufferContentSetter, Li, DbRender
 from qualia.utils.common_utils import live_logger
 
 if TYPE_CHECKING:
@@ -32,14 +31,14 @@ def get_replace_buffer_line(nvim):
     return replace_buffer_line
 
 
-def buffer_lines(buffer):
+def get_buffer_lines(buffer):
     # type:(Buffer) -> Li
     return cast(Li, list(buffer) or [''])
 
 
 def render_buffer(buffer, new_content_lines, nvim):
     # type:(Buffer, Li, Nvim) -> Li
-    old_content_lines = buffer_lines(buffer)
+    old_content_lines = get_buffer_lines(buffer)
     # Pre-Check common state with '==' -> 100x faster than loop
     if (old_content_lines or new_content_lines != ['']) and old_content_lines != new_content_lines:
         new_cursor_column = None
@@ -93,7 +92,7 @@ def render_buffer(buffer, new_content_lines, nvim):
             nvim.command(f"call setpos('.', [0, getcurpos()[1], {new_cursor_column}, 0])")
     if DEBUG:
         try:
-            assert new_content_lines == buffer_lines(buffer)
+            assert new_content_lines == get_buffer_lines(buffer)
         except AssertionError as e:
             raise e
             # buffer[:] = old_content_lines
@@ -151,7 +150,7 @@ def item_mismatch_idxs_from_end(list1: list, list2: list, minimum_idx: int) -> t
 
 
 def content_lines_to_buffer_lines(content_lines: Li, node_id: NodeId, level: int, expanded: bool, ordered: bool,
-                                  db: Database, transposed: bool) -> Li:
+                                  db: DbRender, transposed: bool) -> Li:
     if level == 0:
         buffer_lines = content_lines
     else:
@@ -167,7 +166,7 @@ def content_lines_to_buffer_lines(content_lines: Li, node_id: NodeId, level: int
     return buffer_lines
 
 
-def buffer_node_tracker(node_id: NodeId, transposed: bool, db: Database) -> str:
+def buffer_node_tracker(node_id: NodeId, transposed: bool, db: DbRender) -> str:
     has_other_ancestors = len(db.get_node_descendants(node_id, not transposed, True)) > 1
     return "[](" + (('T' if has_other_ancestors else 't') if transposed else ('N' if has_other_ancestors else 'n')
                     ) + (db.node_to_buffer_id(node_id) if _SHORT_BUFFER_ID else node_id) + ")  "

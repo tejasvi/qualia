@@ -54,17 +54,20 @@ def symlinks_enabled() -> bool:
     return True
 
 
-def create_markdown_file(db: Database, node_id: NodeId, repository_encrypted: bool) -> OrderedSet[NodeId]:
+def create_markdown_file(db: Database, node_id: NodeId, repository_encrypted: bool) -> None:
     content_lines = db.get_node_content_lines(node_id)
     markdown_file_lines = encrypt_lines(content_lines) if repository_encrypted else content_lines
     markdown_file_lines.extend(_CONTENT_CHILDREN_SEPARATOR_LINES)
     valid_node_children_ids = db.get_node_descendants(node_id, False, True)
-    markdown_file_lines.append(f"{_BACKLINK_LINE_START}({GIT_SEARCH_URL + node_id})")
+    markdown_file_lines.append(f"{_BACKLINK_LINE_START}({GIT_SEARCH_URL}+{node_id})")
     for i, child_id in enumerate(sorted(valid_node_children_ids) if _SORT_SIBLINGS else valid_node_children_ids):
         markdown_file_lines.append(f"{i}. [`{child_id}`]({child_id}.md)")
-    with open_write_lf(_GIT_FOLDER.joinpath(node_id + ".md"), False) as f:
+    with open_write_lf(node_git_filepath(node_id), False) as f:
         f.write('\n'.join(markdown_file_lines) + '\n')
-    return valid_node_children_ids
+
+
+def node_git_filepath(node_id: NodeId) -> Path:
+    return _GIT_FOLDER.joinpath(node_id + ".md")
 
 
 def file_children_line_to_node_id(line: str) -> NodeId:

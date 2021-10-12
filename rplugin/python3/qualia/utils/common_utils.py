@@ -10,7 +10,7 @@ from os import PathLike
 from re import split
 from subprocess import run, CalledProcessError
 from threading import Thread
-from time import time_ns
+from time import time_ns, sleep
 from traceback import format_exception
 from typing import Union, cast, Iterable, Callable, IO, TYPE_CHECKING, Optional
 from uuid import UUID, uuid4
@@ -123,8 +123,9 @@ def normalized_search_prefixes(string: str) -> set[str]:
 
 
 class StartLoggedThread(Thread):
-    def __init__(self, target: Callable, name: str):
+    def __init__(self, target: Callable, name: str, delay_seconds: float):
         def logged_target() -> None:
+            sleep(delay_seconds)
             try:
                 target()
             except BaseException as e:

@@ -33,7 +33,7 @@ def sync_with_realtime_db(data: RealtimeBroadcastPacket, realtime_session) -> No
         def broadcast_closure() -> None:
             realtime_session.client_broadcast(data)
 
-        StartLoggedThread(target=broadcast_closure, name="ClientBroadcast")
+        StartLoggedThread(target=broadcast_closure, name="ClientBroadcast", delay_seconds=0)
 
 
 def merge_children_with_local(node_id: NodeId, new_children_ids: Iterable[NodeId], db: Database) -> OrderedSet[

@@ -512,8 +512,8 @@ def _get_win_folder_with_ctypes(csidl_name):
 
 def _get_win_folder_with_jna(csidl_name):
     import array
-    from com.sun import jna # noqa
-    from com.sun.jna.platform import win32 # noqa
+    from com.sun import jna  # noqa
+    from com.sun.jna.platform import win32  # noqa
     buf_size = win32.WinDef.MAX_PATH * 2
     buf = array.zeros('c', buf_size)  # noqa
     shell = win32.Shell32.INSTANCE
@@ -551,7 +551,7 @@ if system == "win32":
         from ctypes import windll
     except ImportError:
         try:
-            import com.sun.jna
+            import com.sun.jna # noqa
         except ImportError:
             try:
                 if PY3:

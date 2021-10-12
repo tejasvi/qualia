@@ -29,7 +29,7 @@ class PluginDriver(PluginUtils):
         self.sync_render_lock = Lock()
         self.git_sync_event = get_task_firing_event(lambda: sync_with_git(nvim), 1)  # 15)
 
-    def main(self, view: Optional[View], fold_level: Optional[int]) -> None:
+    def main(self, root_view: Optional[View], fold_level: Optional[int]) -> None:
         t0 = time()
         with self.sync_render_lock:
             current_buffer: Buffer = self.nvim.current.buffer
@@ -39,7 +39,8 @@ class PluginDriver(PluginUtils):
                 if buffer_file_path == '':
                     return
                 switched_buffer, transposed, main_id = (
-                    self.process_filepath(buffer_file_path, db) if view is None else self.process_view(view, db))
+                    self.process_filepath(buffer_file_path, db) if root_view is None else self.process_view(root_view,
+                                                                                                            db))
                 if switched_buffer:
                     return
                 buffer_id = self.current_buffer_id()
@@ -53,18 +54,21 @@ class PluginDriver(PluginUtils):
 
                 while True:
                     try:
-                        while True:
-                            try:
-                                buffer_lines = cast(Li, list(current_buffer))
-                                root_view = sync_buffer(buffer_lines, main_id, last_sync, db, transposed,
-                                                        self.realtime_session, self.git_sync_event)
-                                break
-                            except RecursionError:
-                                if self.nvim.funcs.confirm("Too many nodes may lead to crash on slow hardware.",
-                                                           "&Pause parsing\n&Continue", 1) == 1:
-                                    self.enabled = False
-                                    return
-                                setrecursionlimit(getrecursionlimit() * 2)
+                        if root_view:
+                            db.set_node_view(root_view, self.file_name_transposed(self.current_buffer_file_path()))
+                        else:
+                            while True:
+                                try:
+                                    buffer_lines = cast(Li, list(current_buffer))
+                                    root_view = sync_buffer(buffer_lines, main_id, last_sync, db, transposed,
+                                                            self.realtime_session, self.git_sync_event)
+                                    break
+                                except RecursionError:
+                                    if self.nvim.funcs.confirm("Too many nodes may lead to crash on slow hardware.",
+                                                               "&Pause parsing\n&Continue", 1) == 1:
+                                        self.enabled = False
+                                        return
+                                    setrecursionlimit(getrecursionlimit() * 2)
                     except DuplicateNodeException as exp:
                         self.handle_duplicate_node(current_buffer, exp)
                     except UncertainNodeChildrenException as exp:
@@ -76,6 +80,7 @@ class PluginDriver(PluginUtils):
                         self.delete_highlights(current_buffer.number)
                         self.buffer_last_sync[buffer_id] = render(root_view, current_buffer, self.nvim, db,
                                                                   transposed, fold_level)
+                        print(f"Rendered at {time()}s")
 
                         total = time() - t0
                         if DEBUG:  # and total > 0.1:

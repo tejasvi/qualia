@@ -12,7 +12,7 @@ from qualia.config import NVIM_DEBUG_PIPE, _FZF_LINE_DELIMITER, _TRANSPOSED_FILE
 from qualia.config import _FILE_FOLDER
 from qualia.database import Database
 from qualia.models import NodeId, DuplicateNodeException, UncertainNodeChildrenException, View, BufferId, LastSync, \
-    LineInfo, KeyNotFoundError, BufferFileId
+    LineInfo, KeyNotFoundError, BufferFileId, DbRender
 from qualia.utils.buffer_utils import buffer_to_node_id
 from qualia.utils.common_utils import live_logger, exception_traceback, file_name_to_file_id, buffer_id_decoder, \
     buffer_id_encoder, compact_base32_encode, compact_base32_decode
@@ -52,13 +52,13 @@ class PluginUtils:
     def current_buffer_file_path(self) -> str:
         return Path(self.nvim.eval("resolve(expand('%:p'))")).resolve().as_posix()
 
-    def navigate_node(self, node_id: NodeId, replace_buffer: bool, db: Database) -> None:
+    def navigate_node(self, node_id: NodeId, replace_buffer: bool, db: DbRender) -> None:
         transposed = self.file_name_transposed(self.nvim.current.buffer.name)
         filepath = self.node_id_filepath(node_id, transposed, db)
         if Path(self.current_buffer_file_path()) != Path(filepath):
             self.replace_with_file(filepath, replace_buffer)
 
-    def process_view(self, view: View, db: Database) -> tuple[bool, bool, NodeId]:
+    def process_view(self, view: View, db: DbRender) -> tuple[bool, bool, NodeId]:
         switched_buffer = False
         try:
             cur_main_id, cur_transposed = self.filepath_node_id_transposed(self.current_buffer_file_path(), db)
@@ -71,7 +71,7 @@ class PluginUtils:
             self.replace_with_file(self.node_id_filepath(view.main_id, view.transposed, db), True)
         return switched_buffer, view.transposed, view.main_id
 
-    def process_filepath(self, file_path: str, db: Database) -> tuple[bool, bool, NodeId]:
+    def process_filepath(self, file_path: str, db: DbRender) -> tuple[bool, bool, NodeId]:
         switched_buffer = True
         try:
             main_id, transposed = self.filepath_node_id_transposed(file_path, db)
@@ -85,7 +85,7 @@ class PluginUtils:
 
         return switched_buffer, transposed, main_id
 
-    def navigate_root_node(self, file_path: str, db: Database) -> tuple[NodeId, bool]:
+    def navigate_root_node(self, file_path: str, db: DbRender) -> tuple[NodeId, bool]:
         transposed = self.file_name_transposed(file_path)
         root_id = db.get_root_id()
         self.replace_with_file(self.node_id_filepath(root_id, transposed, db), True)
@@ -108,7 +108,8 @@ class PluginUtils:
         # type: (Buffer, DuplicateNodeException)->None
         self.nvim.command("set nowrite")
         live_logger.info(
-            f"Duplicate siblings at lines {', '.join([str(first_line) for first_line, _ in exp.line_ranges])}")
+            f"Parsing paused: duplicate siblings at lines {', '.join([str(first_line) for first_line, _ in exp.line_ranges])}")
+        self.enabled = False
         for node_locs in exp.line_ranges:
             for line_num in range(node_locs[0], node_locs[1]):
                 self.highlight_line(buffer.number, line_num)
@@ -133,33 +134,33 @@ class PluginUtils:
     def delete_highlights(self, buffer_numer) -> None:
         self.nvim.funcs.nvim_buf_clear_namespace(buffer_numer, self.highlight_ns, 0, -1)
 
-    def node_ancestory_info(self, line_num: int, level_count: int) -> list[LineInfo]:
+    def view_node_path(self, line_num: int, max_path_length: float) -> list[LineInfo]:
         buffer_id = self.current_buffer_id()
-        assert buffer_id is not None and level_count > 0
+        assert buffer_id is not None and max_path_length > 0
         line_data = self.buffer_last_sync[buffer_id].line_info
 
-        error_msg = f"Line info not found {self.buffer_last_sync=} {line_data=} {line_num=} {buffer_id=} {level_count}"
+        error_msg = f"Line info not found {self.buffer_last_sync=} {line_data=} {line_num=} {buffer_id=} {max_path_length}"
         if line_data is None:
             raise Exception(error_msg)
 
-        info_list = []
+        node_path = []
         last_level = float("inf")
         for line_number in range(line_num, -1, -1):
             if line_number in line_data:
                 cur_level = line_data[line_number].nested_level
                 if cur_level < last_level:
-                    info_list.append(line_data[line_number])
+                    node_path.append(line_data[line_number])
                     last_level = cur_level
-                    level_count -= 1
-                    if level_count == 0:
+                    max_path_length -= 1
+                    if max_path_length == 0:
                         break
 
-        assert level_count == 0, (info_list, error_msg)
+        assert max_path_length == 0, (node_path, error_msg)
 
-        return info_list
+        return node_path
 
     def line_info(self, line_num: int) -> LineInfo:
-        return self.node_ancestory_info(line_num, 1)[0]
+        return self.view_node_path(line_num, 1)[0]
 
     def line_node_view(self, line_num: int) -> View:
         line_info = self.line_info(line_num)
@@ -234,7 +235,7 @@ class PluginUtils:
         return cast(BufferFileId, file_name_to_file_id(full_name, extension))
 
     @staticmethod
-    def buffer_file_id_to_node_id(file_id: BufferFileId, db: Database) -> NodeId:
+    def buffer_file_id_to_node_id(file_id: BufferFileId, db: DbRender) -> NodeId:
         if not _SHORT_BUFFER_ID:
             UUID(file_id)
             return cast(NodeId, file_id)
@@ -245,14 +246,14 @@ class PluginUtils:
         return node_id
 
     @staticmethod
-    def node_id_to_buffer_file_id(node_id: NodeId, db: Database) -> BufferFileId:
+    def node_id_to_buffer_file_id(node_id: NodeId, db: DbRender) -> BufferFileId:
         buffer_id = db.node_to_buffer_id(node_id)
         buffer_id_bytes = buffer_id_decoder(buffer_id)
         file_id = cast(BufferFileId, compact_base32_encode(buffer_id_bytes))
         return file_id
 
     @staticmethod
-    def filepath_node_id_transposed(file_path: str, db: Database) -> tuple[NodeId, bool]:
+    def filepath_node_id_transposed(file_path: str, db: DbRender) -> tuple[NodeId, bool]:
         file_name = basename(file_path)
         transposed = PluginUtils.file_name_transposed(file_path)
         if transposed:
@@ -269,7 +270,7 @@ class PluginUtils:
         return node_id, transposed
 
     @staticmethod
-    def node_id_filepath(node_id: NodeId, transposed: bool, db: Database) -> str:
+    def node_id_filepath(node_id: NodeId, transposed: bool, db: DbRender) -> str:
         file_name = (PluginUtils.node_id_to_buffer_file_id(node_id, db) if _SHORT_BUFFER_ID else node_id) + ".q.md"
         if transposed:
             file_name = _TRANSPOSED_FILE_PREFIX + file_name

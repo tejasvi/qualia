@@ -38,12 +38,19 @@ class LMDB:
 
     def delete_node(self, node_id: NodeId) -> None:
         cursors = self._cursors
-        for cursor in (cursors.children, cursors.content, cursors.views,
-                       cursors.unsynced_children, cursors.unsynced_content, cursors.unsynced_views,
-                       cursors.parents, cursors.transposed_views, cursors.node_id_buffer_id,
-                       cursors.bloom_filters):
+        for cursor in (cursors.children, cursors.content, cursors.views, cursors.parents, cursors.transposed_views,
+                       cursors.node_id_buffer_id, cursors.bloom_filters):
             if cursor.set_key(node_id.encode()):
                 cursor.delete()
+        for cursor in (cursors.unsynced_children, cursors.unsynced_content, cursors.unsynced_views):
+            self.set_unsynced(cursor, node_id)
+
+    def is_valid_node(self, node_id: NodeId) -> bool:
+        return bool(self._get_key_val(node_id, self._cursors.content, False, True))
+
+    @staticmethod
+    def set_unsynced(cursor: Cursor, node_id: NodeId) -> None:
+        LMDB._set_key_val(node_id, b"", cursor, True)
 
     @staticmethod
     @overload
@@ -65,15 +72,10 @@ class LMDB:
         return None if value_bytes is None else (value_bytes if raw_bytes else loads(value_bytes.decode()))
 
     @staticmethod
-    def _set_key_val(key: Union[str, bytes], val: Union[JSONType, bytes], cursor: Cursor, overwrite: bool) -> None:
+    def _set_key_val(key: Union[str, bytes], val: Union[JSONType, bytes], cursor: Cursor,
+                     ignore_existing: bool) -> None:
         cursor.put(key if isinstance(key, bytes) else key.encode(),
-                   val if isinstance(val, bytes) else dumps(val).encode(), overwrite=overwrite)
-
-    @staticmethod
-    def _pop_if_exists(cursor: Cursor, key: str) -> bool:
-        if cursor.set_key(key.encode()):
-            return cursor.delete()
-        return False
+                   val if isinstance(val, bytes) else dumps(val).encode(), overwrite=ignore_existing)
 
     @staticmethod
     def _cursor_keys(cursor: Cursor) -> list[str]:

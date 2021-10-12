@@ -48,7 +48,7 @@ if !(exists('g:qualia_no_keymap') && g:qualia_no_keymap)
 
     function! qualia#set_key_map()
         if !exists('b:qualia_key_map')
-            let maplist = ['h :PromoteNode', 'j :ToggleFold', 'K :NavigateNode', 'k :HoistNode', 'l :TransposeNode', 'L :TransposeNode 1', 'p :ToggleBufferSync', '/ :call qualia#search_input_query()', '? :SearchQualia']
+            let maplist = ['h :PromoteNode', 'j :ToggleFold', 'K :NavigateNode', 'k :HoistNode', 'l :TransposeNode', 'L :TransposeNode 1', 'p :ToggleQualia', '/ :call qualia#search_input_query()', '? :SearchQualia']
             for i in range(1, 9)
                 call add(maplist, i.' :FoldLevel '.i)
             endfor
@@ -74,7 +74,7 @@ function! qualia#pretty_id()
                                 \['\n\s*- \[]([nN].\{-})\zs \ze '    , '•'],
                                 \['\n\s*+ \[]([nN].\{-})\zs \ze '    , '‣'],
                                 \['\n\s*1[.)] \[]([nN].\{-})\zs \ze ', '│'],
-                                \['\n\s*- \[[tT].\{-})\zs \ze '    , '●'],
+                                \['\n\s*- \[]([tT].\{-})\zs \ze '    , '●'],
                                 \['\n\s*+ \[]([tT].\{-})\zs \ze '    , '▶'],
                                 \['\n\s*1[.)] \[]([tT].\{-})\zs \ze ', '┃'],
                                 \['\n\s*\zs1[.)]\ze \[]([tnTN].\{-})', ' '],
@@ -100,7 +100,7 @@ function! FilterQualiaFiles()
 endfunction
 autocmd VimEnter,BufNew *.q.md call FilterQualiaFiles()
 
-autocmd VimEnter,WinEnter,TextChanged,FocusGained,BufEnter,InsertLeave,BufLeave,BufFilePost,BufAdd,CursorHold *.q.md TriggerSync 1
+autocmd VimEnter,WinEnter,TextChanged,FocusGained,BufEnter,InsertLeave,BufFilePost,BufAdd,CursorHold *.q.md TriggerSync 1
 autocmd BufEnter *.q.md setlocal filetype=markdown
-autocmd VimEnter,WinEnter *.q.md set nofoldenable
+autocmd VimEnter,WinEnter *.q.md set nofoldenable nowrap
 "ॱᐧᣟ⋅⸪⸫⸬⸭⸱ꜗꜘꜙ𑁉𑁊

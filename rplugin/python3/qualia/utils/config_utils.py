@@ -2,7 +2,7 @@ from os import PathLike, chmod
 from pathlib import Path
 from shutil import rmtree
 from stat import S_IWRITE
-from typing import Callable, Union, Iterable
+from typing import Callable, Union
 
 
 def create_directory_if_absent(directory_path: Path) -> None:

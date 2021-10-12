@@ -84,7 +84,7 @@ if not OVERRIDE_ADVANCED_SETTINGS:
     _LOG_FILENAME = _LOG_FOLDER.joinpath('logs.txt').resolve()
 
     # Before starting resets data in QUALIA_DATA_DIR (DEBUG adds '_debug' to the path by default)
-    _RESET_APP_FOLDER = True
+    _RESET_APP_FOLDER = False
 
     for _path in (_FILE_FOLDER, _GIT_FOLDER, _DB_FOLDER, _LOG_FOLDER):
         if _RESET_APP_FOLDER:

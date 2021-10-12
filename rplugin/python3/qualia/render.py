@@ -5,8 +5,7 @@ from typing import Optional, cast, TYPE_CHECKING
 from orderedset import OrderedSet
 
 from qualia.config import DEBUG, _SORT_SIBLINGS
-from qualia.database import Database
-from qualia.models import NodeId, View, NodeData, LastSync, LineInfo, Li, InvalidNodeId
+from qualia.models import NodeId, View, NodeData, LastSync, LineInfo, Li, InvalidNodeId, DbRender
 from qualia.sync import ParseProcess
 from qualia.utils.render_utils import render_buffer, content_lines_to_buffer_lines
 
@@ -16,7 +15,7 @@ if TYPE_CHECKING:
 
 
 def render(root_view, buffer, nvim, db, transposed, fold_level):
-    # type:(View, Buffer, Nvim, Database, bool, Optional[int]) -> LastSync
+    # type:(View, Buffer, Nvim, DbRender, bool, Optional[int]) -> LastSync
     new_last_sync, new_content_lines = get_buffer_lines_from_view(root_view, db, transposed, fold_level)
     old_content_lines = render_buffer(buffer, new_content_lines, nvim)
 
@@ -43,7 +42,7 @@ def render(root_view, buffer, nvim, db, transposed, fold_level):
     return new_last_sync
 
 
-def get_buffer_lines_from_view(buffer_view: View, db: Database, transposed: bool,
+def get_buffer_lines_from_view(buffer_view: View, db: DbRender, transposed: bool,
                                fold_level: Optional[int]) -> tuple[LastSync, Li]:
     last_sync = LastSync()
     buffer_lines = cast(Li, [])

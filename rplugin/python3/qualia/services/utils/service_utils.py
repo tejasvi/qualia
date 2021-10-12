@@ -23,7 +23,7 @@ def get_task_firing_event(task: Callable, throttle_seconds: float) -> Event:
             task()
             sleep(throttle_seconds)
 
-    StartLoggedThread(event_watcher, "")
+    StartLoggedThread(event_watcher, "EventWatcher", 0)
     return service_event
 
 

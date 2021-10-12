@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections import UserDict
 from dataclasses import dataclass
 from subprocess import CalledProcessError
@@ -123,6 +124,30 @@ class Cursors:
 
     parents: Cursor
     transposed_views: Cursor
+
+
+class DbRender(ABC):
+    """For supporting alternative data sources in future (e.g. git repo)"""
+
+    @abstractmethod
+    def get_node_descendants(self, node_id: NodeId, transposed: bool, discard_invalid: bool) -> OrderedSet[NodeId]:
+        pass
+
+    @abstractmethod
+    def get_node_content_lines(self, node_id: NodeId) -> Li:
+        pass
+
+    @abstractmethod
+    def node_to_buffer_id(self, node_id: NodeId) -> BufferNodeId:
+        pass
+
+    @abstractmethod
+    def buffer_id_bytes_to_node_id(self, buffer_id_bytes) -> NodeId:
+        pass
+
+    @abstractmethod
+    def get_root_id(self) -> NodeId:
+        pass
 
 
 class RealtimeDbIndexDisabledError(Exception):

@@ -1,14 +1,5 @@
 from __future__ import annotations
 
-# if True or DEBUG and ATTACH_PYCHARM:
-#     # https://www.jetbrains.com/help/pycharm/remote-debugging-with-product.html#remote-debug-config
-#     try:
-#         import pydevd_pycharm
-#
-#         pydevd_pycharm.settrace('localhost', port=9001, stdoutToServer=True, stderrToServer=True, suspend=True)
-#     except ConnectionRefusedError:
-#         pass
-#
 from sys import argv
 from typing import cast
 
@@ -22,15 +13,17 @@ from qualia.config import _ENCRYPTION_USED
 #
 # install_import_hook('qualia')
 
-if _ENCRYPTION_USED:
-    def _fernet_importer() -> None:
-        # Saves about 0.5s
-        from cryptography.fernet import Fernet  # noqa
+if True or DEBUG and ATTACH_PYCHARM:
+    # https://www.jetbrains.com/help/pycharm/remote-debugging-with-product.html#remote-debug-config
+    try:
+        import pydevd_pycharm
 
+        pydevd_pycharm.settrace('localhost', port=9001, stdoutToServer=True, stderrToServer=True, suspend=False)
+        from time import time
 
-    from threading import Thread
-
-    Thread(target=_fernet_importer, name="importer").start()
+        print(f"Starting at {time()}s")
+    except ConnectionRefusedError:
+        pass
 
 
 def _get_plugin_class() -> object:
@@ -47,8 +40,20 @@ def _get_plugin_class() -> object:
     return cast(object, Qualia)
 
 
+def accelerated_import() -> None:
+    # TODO: Profile the improvement
+    if _ENCRYPTION_USED:
+        def _fernet_importer() -> None:
+            import cryptography.fernet  # noqa
+
+        from threading import Thread
+        Thread(target=_fernet_importer, name="FernetImporter").start()
+
+
 # Detect if loaded as plugin or from external script
 if argv[-1].endswith("qualia") or argv[-1].endswith("__init__.py"):
+    accelerated_import()
+
     from pathlib import Path
     from sys import path, version_info
 

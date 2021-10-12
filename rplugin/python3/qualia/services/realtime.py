@@ -29,8 +29,8 @@ class Realtime(RealtimeUtils):
 
         self.last_broadcast_recieve_time = float('-inf')
         self.unsynced_changes_event = get_task_firing_event(buffer_sync_trigger, 0)
-        StartLoggedThread(target=self.initialize, name="InitRealtime")
-        StartLoggedThread(target=self.watch_send_bulk_broadcast_conflicts, name="ConflictWatcher")
+        StartLoggedThread(target=self.initialize, name="InitRealtime", delay_seconds=2)
+        StartLoggedThread(target=self.watch_send_bulk_broadcast_conflicts, name="ConflictWatcher", delay_seconds=2)
 
     def connect_firebase(self) -> None:
         import firebase_admin  # Takes ~0.8 s
@@ -46,7 +46,7 @@ class Realtime(RealtimeUtils):
         self.others_online = self.check_others_online()
         self.connections_ref.listen(self.new_client_listener)
 
-        StartLoggedThread(target=self.update_online_status, name="UpdateOnlineStatus")
+        StartLoggedThread(target=self.update_online_status, name="UpdateOnlineStatus", delay_seconds=2)
 
     def update_online_status(self) -> None:
         from requests import HTTPError
