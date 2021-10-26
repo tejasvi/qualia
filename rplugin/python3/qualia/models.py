@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections import UserDict
 from dataclasses import dataclass
+from pathlib import Path
 from subprocess import CalledProcessError
 from typing import NewType, Union, Optional, Tuple, Dict, MutableMapping, List, Callable
 
@@ -88,10 +89,11 @@ class GitMergeError(CustomCalledProcessError):
 
 
 class LastSync(UserDict, MutableMapping[NodeId, NodeData]):
-    def __init__(self) -> None:
+    def __init__(self, source_directory: Optional[Path]) -> None:
         super().__init__()
         self.data: Dict[NodeId, NodeData] = {}
         self.line_info: Dict[int, LineInfo] = {}
+        self.source_directory = source_directory
 
     def __clear__(self) -> None:
         self.data.clear()
@@ -126,8 +128,11 @@ class Cursors:
     transposed_views: Cursor
 
 
-class DbRender(ABC):
+class MinimalDb(ABC):
     """For supporting alternative data sources in future (e.g. git repo)"""
+    @abstractmethod
+    def __init__(self, _source_location: str):
+        pass
 
     @abstractmethod
     def get_node_descendants(self, node_id: NodeId, transposed: bool, discard_invalid: bool) -> OrderedSet[NodeId]:
@@ -196,4 +201,8 @@ class AbstractFernet:
 
 
 class InvalidNodeId:
+    pass
+
+
+class InvalidFileChildrenLine(Exception):
     pass

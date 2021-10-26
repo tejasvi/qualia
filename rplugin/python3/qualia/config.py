@@ -80,6 +80,7 @@ if not OVERRIDE_ADVANCED_SETTINGS:
     _FILE_FOLDER = _app_path("files")
     _DB_FOLDER = _app_path("db")
     _GIT_FOLDER = _app_path("git")
+    _GIT_DATA_FOLDER = _GIT_FOLDER.joinpath('data')
     _LOG_FOLDER = _app_path('logs')
     _LOG_FILENAME = _LOG_FOLDER.joinpath('logs.txt').resolve()
 

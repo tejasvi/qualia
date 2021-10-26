@@ -10,9 +10,10 @@ path.append(Path(__file__).parent.parent.as_posix())  # noqa: E402
 
 from typing import Optional, TYPE_CHECKING, cast
 
-from qualia.config import GIT_BRANCH, GIT_AUTHORIZED_REMOTE, _GIT_FOLDER, \
-    _GIT_ENCRYPTION_ENABLED_FILE_NAME
-from qualia.models import CustomCalledProcessError, GitChangedNodes, GitMergeError, KeyNotFoundError, NodeId
+from qualia.config import GIT_BRANCH, GIT_AUTHORIZED_REMOTE, _GIT_DATA_FOLDER, \
+    _GIT_ENCRYPTION_ENABLED_FILE_NAME, _GIT_FOLDER
+from qualia.models import CustomCalledProcessError, GitChangedNodes, GitMergeError, KeyNotFoundError, NodeId, \
+    InvalidFileChildrenLine
 from qualia.utils.bootstrap_utils import repository_setup, bootstrap
 from qualia.utils.common_utils import cd_run_git_cmd, file_name_to_file_id, live_logger, \
     exception_traceback, conflict, trigger_buffer_change
@@ -23,18 +24,19 @@ from qualia.services.utils.git_utils import create_markdown_file, repository_fil
 if TYPE_CHECKING:
     from pynvim import Nvim
 
-
 def sync_with_git(nvim):
     # type:(Optional[Nvim]) -> None
     """
     Invariant: State of git repository is synced with DB before starting git sync.
     """
     live_logger.debug("Git sync started")
-    assert repository_setup.wait(60), "Repository setup not yet finished"
+    if repository_setup.wait(60):
+        live_logger.error("Repository setup not yet finished")
+        return
     try:
         with GitInit():
             changed_file_names = fetch_from_remote()
-            repository_encrypted = _GIT_FOLDER.joinpath(_GIT_ENCRYPTION_ENABLED_FILE_NAME).is_file()
+            repository_encrypted = _GIT_DATA_FOLDER.joinpath(_GIT_ENCRYPTION_ENABLED_FILE_NAME).is_file()
             with Database() as db:
                 if changed_file_names:
                     directory_to_db(db, changed_file_names, repository_encrypted)
@@ -81,7 +83,7 @@ def fetch_from_remote() -> list[str]:
                 # else:
                 #     raise exp
             else:
-                changed_file_names = _GIT_FOLDER.glob("*.q.md") if commit_hash_before_merge is None else cd_run_git_cmd(
+                changed_file_names = _GIT_DATA_FOLDER.glob("*.md") if commit_hash_before_merge is None else cd_run_git_cmd(
                     ["diff", "--name-only", commit_hash_before_merge, "FETCH_HEAD"]).splitlines()
                 return changed_file_names
     return []
@@ -101,7 +103,7 @@ def directory_to_db(db: Database, changed_file_names: list[str], repository_encr
     changed_nodes: GitChangedNodes = {}
     for file_name in changed_file_names:
         relative_file_path = Path(file_name)
-        absolute_file_path = _GIT_FOLDER.joinpath(file_name)
+        absolute_file_path = _GIT_DATA_FOLDER.joinpath(file_name)
         if absolute_file_path.exists() and len(relative_file_path.parts) == 1 and absolute_file_path.is_file():
             try:
                 file_id = file_name_to_file_id(relative_file_path.name, ".md")
@@ -110,9 +112,13 @@ def directory_to_db(db: Database, changed_file_names: list[str], repository_encr
             except ValueError:
                 live_logger.critical(f"Invalid {relative_file_path}")
             else:
-                with open(absolute_file_path) as f:
-                    content_lines, children_ids = repository_file_to_content_children(f, repository_encrypted)
-                    changed_nodes[node_id] = OrderedSet(children_ids), content_lines
+                try:
+                    content_lines, children_ids = repository_file_to_content_children(absolute_file_path, repository_encrypted)
+                except InvalidFileChildrenLine as e:
+                    live_logger.critical(
+                        f"{file_name} is in invalid format. Could not extract it's content and children.")
+                    raise e
+                changed_nodes[node_id] = OrderedSet(children_ids), content_lines
 
     sync_git_to_db(changed_nodes, db)
 

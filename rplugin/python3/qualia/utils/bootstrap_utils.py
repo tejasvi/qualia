@@ -3,9 +3,9 @@ from typing import cast
 
 from orderedset import OrderedSet
 
-from qualia.config import GIT_BRANCH, GIT_AUTHORIZED_REMOTE, _GIT_FOLDER, ENCRYPT_DB, \
+from qualia.config import GIT_BRANCH, GIT_AUTHORIZED_REMOTE, ENCRYPT_DB, \
     ENCRYPT_NEW_GIT_REPOSITORY, _GIT_ENCRYPTION_ENABLED_FILE_NAME, \
-    _GIT_ENCRYPTION_DISABLED_FILE_NAME
+    _GIT_ENCRYPTION_DISABLED_FILE_NAME, _GIT_FOLDER
 from qualia.database import Database
 from qualia.models import DbClient, CustomCalledProcessError, NodeId, Li, KeyNotFoundError
 from qualia.services.backup import backup_db
@@ -48,8 +48,7 @@ def setup_repository(client_data: DbClient) -> None:
 
         gitattributes_path = _GIT_FOLDER.joinpath(".gitattributes")
         if not gitattributes_path.exists():
-            with open_write_lf(gitattributes_path, True) as f:
-                f.write("*.md merge=union\n* text=auto eol=lf\n")
+            open_write_lf(gitattributes_path, True, ["*.md merge=union", "* text=auto eol=lf"])
             cd_run_git_cmd(["add", "-A"])
             cd_run_git_cmd(["commit", "-m", "Bootstrap"])
 
@@ -66,7 +65,7 @@ def setup_repository(client_data: DbClient) -> None:
 
 def setup_encryption(db: Database) -> None:
     if bool(ENCRYPT_DB) != db.db_encrypted():
-        db.toggle_encryption()
+        db.set_encryption()
 
 
 def bootstrap() -> None:

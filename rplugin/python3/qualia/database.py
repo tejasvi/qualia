@@ -7,7 +7,7 @@ from orderedset import OrderedSet
 
 from qualia.config import ENCRYPT_DB, _ROOT_ID_KEY, _DB_ENCRYPTION_ENABLED_KEY, _CLIENT_KEY, \
     _SHORT_ID_STORE_BYTES
-from qualia.models import NodeId, El, Li, View, Tree, DbClient, BufferNodeId, DbRender
+from qualia.models import NodeId, El, Li, View, Tree, DbClient, BufferNodeId, MinimalDb
 from qualia.utils.common_utils import decrypt_lines, encrypt_lines, get_uuid, children_data_hash, \
     fernet, normalized_search_prefixes, buffer_id_encoder
 from qualia.utils.database_utils import LMDB
@@ -48,21 +48,6 @@ class _DbContent(_DbUnsynced, LMDB):
         self.set_unsynced(self._cursors.unsynced_content, node_id)
         if self._cursors.bloom_filters.set_key(node_id.encode()):
             self._cursors.bloom_filters.delete()
-
-    def toggle_encryption(self) -> None:
-        encryption_existed = LMDB._get_key_val(_DB_ENCRYPTION_ENABLED_KEY, self._cursors.metadata, True, False)
-        for node_id in LMDB._cursor_keys(self._cursors.content):
-            node_id = cast(NodeId, node_id)
-            db_content_lines = self._get_db_node_content_lines(node_id)
-            if encryption_existed:
-                db_content_lines = cast(El, db_content_lines)
-                content_lines = decrypt_lines(db_content_lines)
-            else:
-                content_lines = cast(Li, db_content_lines)
-            self.set_node_content_lines(node_id, content_lines)
-        for _node_id in LMDB._cursor_keys(self._cursors.bloom_filters):
-            self._cursors.bloom_filters.delete()
-        LMDB._set_key_val(_DB_ENCRYPTION_ENABLED_KEY, not encryption_existed, self._cursors.metadata, True)
 
 
 class _DbDescendants(_DbUnsynced, LMDB):
@@ -198,5 +183,20 @@ class _DbBloom(_DbContent, LMDB):
         return bloom_filter
 
 
-class Database(_DbDescendants, _DbBloom, _DbContent, _DbUnsynced, _DbMeta, _DbView, _DbNodeIds, DbRender):
+class Database(_DbDescendants, _DbBloom, _DbContent, _DbUnsynced, _DbMeta, _DbView, _DbNodeIds, MinimalDb):
+    def set_encryption(self) -> None:
+        encryption_existed = self.db_encrypted()
+        for node_id in LMDB._cursor_keys(self._cursors.content):
+            node_id = cast(NodeId, node_id)
+            db_content_lines = self._get_db_node_content_lines(node_id)
+            if encryption_existed:
+                db_content_lines = cast(El, db_content_lines)
+                content_lines = decrypt_lines(db_content_lines)
+            else:
+                content_lines = cast(Li, db_content_lines)
+            self.set_node_content_lines(node_id, content_lines)
+        for _node_id in LMDB._cursor_keys(self._cursors.bloom_filters):
+            self._cursors.bloom_filters.delete()
+        LMDB._set_key_val(_DB_ENCRYPTION_ENABLED_KEY, not encryption_existed, self._cursors.metadata, True)
+
     pass

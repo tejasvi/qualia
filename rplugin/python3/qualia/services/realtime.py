@@ -6,7 +6,7 @@ from threading import current_thread
 from time import sleep, time
 from typing import TYPE_CHECKING, Callable, cast
 
-from qualia.config import FIREBASE_WEB_APP_CONFIG
+
 from qualia.database import Database
 from qualia.models import RealtimeBroadcastPacket, RealtimeDbIndexDisabledError, RealtimeStringifiedChildren, \
     RealtimeStringifiedContent, RealtimeContent, NodeId, Li
@@ -18,6 +18,7 @@ from qualia.utils.common_utils import live_logger, exception_traceback, StartLog
 
 if TYPE_CHECKING:
     from firebase_admin.db import Event as FirebaseEvent
+    from firebase_admin import App
 
 
 class Realtime(RealtimeUtils):
@@ -32,17 +33,14 @@ class Realtime(RealtimeUtils):
         StartLoggedThread(target=self.initialize, name="InitRealtime", delay_seconds=2)
         StartLoggedThread(target=self.watch_send_bulk_broadcast_conflicts, name="ConflictWatcher", delay_seconds=2)
 
-    def connect_firebase(self) -> None:
-        import firebase_admin  # Takes ~0.8 s
+    def connect_firebase(self, app):
+        # type: (App) -> None
         import firebase_admin.db as db
 
-        live_logger.debug("Connecting firebase")
-        default_app = firebase_admin.initialize_app(options=FIREBASE_WEB_APP_CONFIG)
-
-        self.data_ref = db.reference('/data', default_app)
+        self.data_ref = db.reference('/data', app)
         self.data_ref.listen(self.broadcast_listener)
 
-        self.connections_ref = db.reference('/connections', default_app)
+        self.connections_ref = db.reference('/connections', app)
         self.others_online = self.check_others_online()
         self.connections_ref.listen(self.new_client_listener)
 

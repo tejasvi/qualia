@@ -12,7 +12,7 @@ from qualia.config import NVIM_DEBUG_PIPE, _FZF_LINE_DELIMITER, _TRANSPOSED_FILE
 from qualia.config import _FILE_FOLDER
 from qualia.database import Database
 from qualia.models import NodeId, DuplicateNodeException, UncertainNodeChildrenException, View, BufferId, LastSync, \
-    LineInfo, KeyNotFoundError, BufferFileId, DbRender
+    LineInfo, KeyNotFoundError, BufferFileId, MinimalDb
 from qualia.utils.buffer_utils import buffer_to_node_id
 from qualia.utils.common_utils import live_logger, exception_traceback, file_name_to_file_id, buffer_id_decoder, \
     buffer_id_encoder, compact_base32_encode, compact_base32_decode
@@ -50,15 +50,17 @@ class PluginUtils:
                 raise e
 
     def current_buffer_file_path(self) -> str:
-        return Path(self.nvim.eval("resolve(expand('%:p'))")).resolve().as_posix()
+        vim_path = self.nvim.eval("resolve(expand('%:p'))")
+        assert vim_path, "Current buffer file path is empty (new buffer?)"
+        return Path(vim_path).resolve().as_posix()
 
-    def navigate_node(self, node_id: NodeId, replace_buffer: bool, db: DbRender) -> None:
+    def navigate_node(self, node_id: NodeId, replace_buffer: bool, db: MinimalDb) -> None:
         transposed = self.file_name_transposed(self.nvim.current.buffer.name)
         filepath = self.node_id_filepath(node_id, transposed, db)
         if Path(self.current_buffer_file_path()) != Path(filepath):
             self.replace_with_file(filepath, replace_buffer)
 
-    def process_view(self, view: View, db: DbRender) -> tuple[bool, bool, NodeId]:
+    def process_view(self, view: View, db: MinimalDb) -> tuple[bool, bool, NodeId]:
         switched_buffer = False
         try:
             cur_main_id, cur_transposed = self.filepath_node_id_transposed(self.current_buffer_file_path(), db)
@@ -71,7 +73,7 @@ class PluginUtils:
             self.replace_with_file(self.node_id_filepath(view.main_id, view.transposed, db), True)
         return switched_buffer, view.transposed, view.main_id
 
-    def process_filepath(self, file_path: str, db: DbRender) -> tuple[bool, bool, NodeId]:
+    def process_filepath(self, file_path: str, db: MinimalDb) -> tuple[bool, bool, NodeId]:
         switched_buffer = True
         try:
             main_id, transposed = self.filepath_node_id_transposed(file_path, db)
@@ -85,8 +87,8 @@ class PluginUtils:
 
         return switched_buffer, transposed, main_id
 
-    def navigate_root_node(self, file_path: str, db: DbRender) -> tuple[NodeId, bool]:
-        transposed = self.file_name_transposed(file_path)
+    def navigate_root_node(self, cur_file_path: str, db: MinimalDb) -> tuple[NodeId, bool]:
+        transposed = self.file_name_transposed(cur_file_path)
         root_id = db.get_root_id()
         self.replace_with_file(self.node_id_filepath(root_id, transposed, db), True)
         live_logger.info("Redirecting to root node")
@@ -165,9 +167,10 @@ class PluginUtils:
     def line_node_view(self, line_num: int) -> View:
         line_info = self.line_info(line_num)
         node_id = line_info.node_id
+        parent_view = line_info.parent_view
         view = View(node_id,
-                    line_info.parent_view.sub_tree[node_id] if line_info.parent_view.sub_tree else {},
-                    self.file_name_transposed(self.current_buffer_file_path()))
+                    parent_view.sub_tree[node_id] if parent_view.sub_tree else {},
+                    parent_view.transposed)
         return view
 
     def should_continue(self, force: bool) -> bool:
@@ -187,20 +190,20 @@ class PluginUtils:
         if (self.ide_debugging and undotree["synced"] == 0) or (cur_undo_seq < undotree["seq_last"]):
             return False
 
-        buffer_id = self.current_buffer_id()
-        if buffer_id is None:
+        cur_buffer_id = self.current_buffer_id()
+        if cur_buffer_id is None:
             return False
-        if buffer_id in self.undo_seq:
-            last_processed_undo_seq = self.undo_seq[buffer_id]
+        if cur_buffer_id in self.undo_seq:
+            last_processed_undo_seq = self.undo_seq[cur_buffer_id]
             if cur_undo_seq < last_processed_undo_seq or (cur_undo_seq == last_processed_undo_seq and not force):
                 return False
             else:
                 for undo_entry in reversed(undotree['entries']):
                     if cur_undo_seq in undo_entry:
                         if 'alt' in undo_entry:
-                            self.buffer_last_sync.pop(buffer_id)
+                            self.buffer_last_sync.pop(cur_buffer_id)
                         break
-        self.undo_seq[buffer_id] = cur_undo_seq
+        self.undo_seq[cur_buffer_id] = cur_undo_seq
 
         # Undo changes changedtick so check that before to pop last_sync
         try:
@@ -208,10 +211,10 @@ class PluginUtils:
         except OSError as e:
             live_logger.critical(exception_traceback(e))
         else:
-            if not force and changedtick == self.changedtick[buffer_id]:
+            if not force and changedtick == self.changedtick[cur_buffer_id]:
                 return False
             else:
-                self.changedtick[buffer_id] = changedtick
+                self.changedtick[cur_buffer_id] = changedtick
 
         return True
 
@@ -235,7 +238,7 @@ class PluginUtils:
         return cast(BufferFileId, file_name_to_file_id(full_name, extension))
 
     @staticmethod
-    def buffer_file_id_to_node_id(file_id: BufferFileId, db: DbRender) -> NodeId:
+    def buffer_file_id_to_node_id(file_id: BufferFileId, db: MinimalDb) -> NodeId:
         if not _SHORT_BUFFER_ID:
             UUID(file_id)
             return cast(NodeId, file_id)
@@ -246,14 +249,14 @@ class PluginUtils:
         return node_id
 
     @staticmethod
-    def node_id_to_buffer_file_id(node_id: NodeId, db: DbRender) -> BufferFileId:
+    def node_id_to_buffer_file_id(node_id: NodeId, db: MinimalDb) -> BufferFileId:
         buffer_id = db.node_to_buffer_id(node_id)
         buffer_id_bytes = buffer_id_decoder(buffer_id)
         file_id = cast(BufferFileId, compact_base32_encode(buffer_id_bytes))
         return file_id
 
     @staticmethod
-    def filepath_node_id_transposed(file_path: str, db: DbRender) -> tuple[NodeId, bool]:
+    def filepath_node_id_transposed(file_path: str, db: MinimalDb) -> tuple[NodeId, bool]:
         file_name = basename(file_path)
         transposed = PluginUtils.file_name_transposed(file_path)
         if transposed:
@@ -270,7 +273,7 @@ class PluginUtils:
         return node_id, transposed
 
     @staticmethod
-    def node_id_filepath(node_id: NodeId, transposed: bool, db: DbRender) -> str:
+    def node_id_filepath(node_id: NodeId, transposed: bool, db: MinimalDb) -> str:
         file_name = (PluginUtils.node_id_to_buffer_file_id(node_id, db) if _SHORT_BUFFER_ID else node_id) + ".q.md"
         if transposed:
             file_name = _TRANSPOSED_FILE_PREFIX + file_name

@@ -5,7 +5,7 @@ from typing import Optional, cast, TYPE_CHECKING
 from orderedset import OrderedSet
 
 from qualia.config import DEBUG, _SORT_SIBLINGS
-from qualia.models import NodeId, View, NodeData, LastSync, LineInfo, Li, InvalidNodeId, DbRender
+from qualia.models import NodeId, View, NodeData, LastSync, LineInfo, Li, InvalidNodeId, MinimalDb
 from qualia.sync import ParseProcess
 from qualia.utils.render_utils import render_buffer, content_lines_to_buffer_lines
 
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 def render(root_view, buffer, nvim, db, transposed, fold_level):
-    # type:(View, Buffer, Nvim, DbRender, bool, Optional[int]) -> LastSync
+    # type:(View, Buffer, Nvim, MinimalDb, bool, Optional[int]) -> LastSync
     new_last_sync, new_content_lines = get_buffer_lines_from_view(root_view, db, transposed, fold_level)
     old_content_lines = render_buffer(buffer, new_content_lines, nvim)
 
@@ -42,9 +42,9 @@ def render(root_view, buffer, nvim, db, transposed, fold_level):
     return new_last_sync
 
 
-def get_buffer_lines_from_view(buffer_view: View, db: DbRender, transposed: bool,
+def get_buffer_lines_from_view(buffer_view: View, db: MinimalDb, transposed: bool,
                                fold_level: Optional[int]) -> tuple[LastSync, Li]:
-    last_sync = LastSync()
+    last_sync = LastSync(None)
     buffer_lines = cast(Li, [])
     stack: list[tuple[NodeId, View, int, int, bool, int]] = [(buffer_view.main_id, View(cast(NodeId, InvalidNodeId()), {
         buffer_view.main_id: {} if buffer_view.sub_tree is None else buffer_view.sub_tree}, transposed), -1, 0, False,

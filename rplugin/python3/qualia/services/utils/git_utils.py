@@ -6,22 +6,16 @@ from signal import getsignal, SIGTERM, SIG_DFL, signal, Signals
 from tempfile import gettempdir
 from time import sleep
 from types import FrameType
-from typing import Iterable, TextIO, cast
+from typing import Iterable, cast
 
 from orderedset import OrderedSet
 
-from qualia.config import GIT_SEARCH_URL, _GIT_FOLDER, GIT_BRANCH, _SORT_SIBLINGS
+from qualia.config import GIT_SEARCH_URL, _GIT_DATA_FOLDER, GIT_BRANCH, _SORT_SIBLINGS, _GIT_FOLDER
 from qualia.database import Database
-from qualia.models import NodeId, El, Li
+from qualia.models import NodeId, El, Li, InvalidFileChildrenLine
 from qualia.utils.common_utils import cd_run_git_cmd, live_logger, open_write_lf, decrypt_lines, encrypt_lines
 
-_BACKLINK_LINE_START = "0. [`Backlinks`]"
 _CONTENT_CHILDREN_SEPARATOR_LINES = ["<hr>", ""]
-
-
-def add_content_to_node_directory(content_lines: Li, node_directory_path: Path):
-    with open_write_lf(node_directory_path.joinpath("README.md"), True) as content_file:
-        content_file.write('\n'.join(content_lines) + '\n')
 
 
 def add_children_to_node_directory(node_children_ids: Iterable[NodeId], node_directory_path: Path):
@@ -31,8 +25,8 @@ def add_children_to_node_directory(node_children_ids: Iterable[NodeId], node_dir
         if symlinks_enabled():
             symlink(symlink_source, child_path, target_is_directory=True)
         else:
-            with open_write_lf(child_path, True) as child_file:
-                child_file.writelines([symlink_source])
+            # TODO: verify if symlink files need newlines at the end
+            open_write_lf(child_path, True, [symlink_source])
 
 
 @cache
@@ -55,41 +49,51 @@ def symlinks_enabled() -> bool:
 
 
 def create_markdown_file(db: Database, node_id: NodeId, repository_encrypted: bool) -> None:
+    """
+    CONTENT
+    CONTENT ...
+    <Any line> - backlink search link in this case. Below is empty line.
+
+    Line containing child's "<UUID>.md"
+    Line containing child's "<UUID>.md" ...
+    """
     content_lines = db.get_node_content_lines(node_id)
     markdown_file_lines = encrypt_lines(content_lines) if repository_encrypted else content_lines
-    markdown_file_lines.extend(_CONTENT_CHILDREN_SEPARATOR_LINES)
     valid_node_children_ids = db.get_node_descendants(node_id, False, True)
-    markdown_file_lines.append(f"{_BACKLINK_LINE_START}({GIT_SEARCH_URL}+{node_id})")
+    markdown_file_lines.append(f"<hr><ol start=0><li><a href='{GIT_SEARCH_URL + node_id}+md'>Backlinks</a></li></ol>)")
+    markdown_file_lines.append("")
     for i, child_id in enumerate(sorted(valid_node_children_ids) if _SORT_SIBLINGS else valid_node_children_ids):
-        markdown_file_lines.append(f"{i}. [`{child_id}`]({child_id}.md)")
-    with open_write_lf(node_git_filepath(node_id), False) as f:
-        f.write('\n'.join(markdown_file_lines) + '\n')
+        markdown_file_lines.append(f"{i+1}. [`{child_id}`]({child_id}.md)")
+    open_write_lf(node_git_filepath(node_id), False, markdown_file_lines)
 
 
 def node_git_filepath(node_id: NodeId) -> Path:
-    return _GIT_FOLDER.joinpath(node_id + ".md")
+    return _GIT_DATA_FOLDER.joinpath(node_id + ".md")
 
 
 def file_children_line_to_node_id(line: str) -> NodeId:
+    # TODO: Case sensitivity?
     uuid_match = search(r"[0-9a-f]{8}(?:-?[0-9a-f]{4}){4}[0-9a-f]{8}(?=\.md\)$)", line)
-    assert uuid_match, f"Child node ID for '{line}' couldn't be parsed"
+    if not uuid_match:
+        raise InvalidFileChildrenLine(f"Child node ID for '{line}' couldn't be parsed")
     return cast(NodeId, uuid_match.group())
 
 
-def repository_file_to_content_children(file: TextIO, encrypted: bool) -> tuple[Li, OrderedSet]:
-    lines = file.read().splitlines()
-    children_ids = []
+def repository_file_to_content_children(file_path: Path, encrypted: bool) -> tuple[Li, OrderedSet]:
+    with open(file_path) as file:
+        lines = file.read().splitlines()
+        children_ids = []
 
-    while lines:
-        line = lines.pop()
-        if line.startswith(_BACKLINK_LINE_START):
-            assert lines.pop() == _CONTENT_CHILDREN_SEPARATOR_LINES[1]
-            assert lines.pop() == _CONTENT_CHILDREN_SEPARATOR_LINES[0]
-            break
-        children_ids.append(file_children_line_to_node_id(line))
+        while lines:
+            line = lines.pop()
+            if line:
+                children_ids.append(file_children_line_to_node_id(line))
+            else:
+                lines.pop()
+                break
 
-    lines = decrypt_lines(cast(El, lines)) if encrypted else cast(Li, lines)
-    return lines, OrderedSet(reversed(children_ids))
+        lines = decrypt_lines(cast(El, lines)) if encrypted else cast(Li, lines)
+        return lines, OrderedSet(reversed(children_ids))
 
 
 def sigterm_handler(_signal: Signals, _traceback_frame: FrameType) -> None:

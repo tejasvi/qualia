@@ -33,21 +33,22 @@ class PluginDriver(PluginUtils):
         t0 = time()
         with self.sync_render_lock:
             current_buffer: Buffer = self.nvim.current.buffer
+            current_buffer_id = self.current_buffer_id()
+            if current_buffer_id is None:
+                return
 
             with Database() as db:
-                buffer_file_path = self.current_buffer_file_path()
-                if buffer_file_path == '':
+                try:
+                    buffer_file_path = self.current_buffer_file_path()
+                except AssertionError:
                     return
                 switched_buffer, transposed, main_id = (
                     self.process_filepath(buffer_file_path, db) if root_view is None else self.process_view(root_view,
                                                                                                             db))
                 if switched_buffer:
                     return
-                buffer_id = self.current_buffer_id()
-                if buffer_id is None:
-                    return
 
-                last_sync = self.buffer_last_sync[buffer_id]
+                last_sync = self.buffer_last_sync[current_buffer_id]
 
                 t1 = time()
                 del1 = t1 - t0
@@ -78,7 +79,7 @@ class PluginDriver(PluginUtils):
                         t2 = time()
                         del2 = t2 - t1
                         self.delete_highlights(current_buffer.number)
-                        self.buffer_last_sync[buffer_id] = render(root_view, current_buffer, self.nvim, db,
+                        self.buffer_last_sync[current_buffer_id] = render(root_view, current_buffer, self.nvim, db,
                                                                   transposed, fold_level)
                         print(f"Rendered at {time()}s")
 
@@ -91,7 +92,7 @@ class PluginDriver(PluginUtils):
             self.nvim.command("silent set write | silent update")
             # self.nvim.command(
             #     "echom 'modified' getbufinfo(bufnr())[0].changed bufname() getbufline(bufnr(), 1, '$') b:changedtick | silent set write | silent update")
-            self.changedtick[buffer_id] = self.nvim.eval("b:changedtick")
+            self.changedtick[current_buffer_id] = self.nvim.eval("b:changedtick")
 
     def trigger_sync(self, force: bool) -> None:
         live_logger.debug(f"Trigger {time()}")

@@ -8,7 +8,7 @@ from typing import Iterable, TYPE_CHECKING, cast, Literal, Union, Iterator
 from ntplib import NTPClient, NTPException
 from orderedset import OrderedSet
 
-from qualia.config import ENCRYPT_REALTIME
+from qualia.config import ENCRYPT_REALTIME, FIREBASE_WEB_APP_CONFIG
 from qualia.database import Database
 from qualia.models import RealtimeBroadcastPacket, NodeId, RealtimeContent, RealtimeStringifiedData, \
     RealtimeStringifiedContent, RealtimeStringifiedChildren, StringifiedChildren, \
@@ -20,6 +20,7 @@ from qualia.utils.common_utils import conflict, live_logger, \
 
 if TYPE_CHECKING:
     from firebase_admin.db import Reference, Event as FirebaseEvent
+    from firebase_admin import App
     from requests import ConnectionError  # Takes ~0.1s
     from urllib3.exceptions import MaxRetryError
 else:
@@ -161,10 +162,14 @@ class RealtimeUtils(metaclass=ABCMeta):
 
     def initialize(self) -> None:
         live_logger.debug("Initializing")
+        import firebase_admin  # Takes ~0.8 s
+
+        live_logger.debug("Connecting firebase")
+        default_app = firebase_admin.initialize_app(options=FIREBASE_WEB_APP_CONFIG)
         while True:
             try:
                 self.offset_seconds = NTPClient().request('time.google.com').offset
-                self.connect_firebase()
+                self.connect_firebase(default_app)
             except network_errors() as e:
                 live_logger.debug("Couldn't connect to firebase\n" + exception_traceback(e))
                 sleep(5)
@@ -176,7 +181,8 @@ class RealtimeUtils(metaclass=ABCMeta):
                 break
 
     @abstractmethod
-    def connect_firebase(self) -> None:
+    def connect_firebase(self, app):
+        # type: (App) -> None
         pass
 
 

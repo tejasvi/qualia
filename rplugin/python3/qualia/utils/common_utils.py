@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 from base64 import urlsafe_b64encode, b64decode, b64encode, b32decode, b32encode
 from bisect import bisect_left, insort
 from hashlib import sha256
@@ -12,11 +13,11 @@ from subprocess import run, CalledProcessError
 from threading import Thread
 from time import time_ns, sleep
 from traceback import format_exception
-from typing import Union, cast, Iterable, Callable, IO, TYPE_CHECKING, Optional
+from typing import Union, cast, Iterable, Callable, TYPE_CHECKING, Optional
 from uuid import UUID, uuid4
 
-from qualia.config import _GIT_FOLDER, _LOGGER_NAME, _TRANSPOSED_FILE_PREFIX, \
-    _CONFLICT_MARKER, _ENCRYPTION_KEY_FILE, _ENCRYPTION_USED, _SHORT_ID_STORE_BYTES, DEBUG
+from qualia.config import _LOGGER_NAME, _TRANSPOSED_FILE_PREFIX, \
+    _CONFLICT_MARKER, _ENCRYPTION_KEY_FILE, _ENCRYPTION_USED, _SHORT_ID_STORE_BYTES, DEBUG, _GIT_FOLDER
 from qualia.models import NodeId, CustomCalledProcessError, El, Li, BufferNodeId, KeyNotFoundError
 from qualia.services.backup import removesuffix
 
@@ -140,8 +141,9 @@ def get_uuid() -> NodeId:
     return cast(NodeId, str(uuid4()))
 
 
-def open_write_lf(file_path: Union[str, bytes, PathLike], prevent_overwrite: bool) -> IO:
-    return open(file_path, 'x' if prevent_overwrite else 'w', newline='\n')
+def open_write_lf(file_path: Union[str, bytes, PathLike], prevent_overwrite: bool, lines: list[str]) -> None:
+    with open(file_path, 'x' if prevent_overwrite else 'w', newline='\n') as file:
+        file.write('\n'.join(lines) + '\n')
 
 
 if _ENCRYPTION_USED:
@@ -224,3 +226,5 @@ class InvalidBufferNodeIdError(KeyNotFoundError):
         live_logger.critical(f'Invalid buffer node ID: "{buffer_node_id}"'
                              + '. Modified hidden node ID by any chance?')
         super().__init__(buffer_node_id)
+
+counter = itertools.count()

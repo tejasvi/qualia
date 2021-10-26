@@ -2,7 +2,7 @@ from difflib import SequenceMatcher
 from typing import Iterator, Union, cast, Optional, TYPE_CHECKING
 
 from qualia.config import DEBUG, _EXPANDED_BULLET, _COLLAPSED_BULLET, NEST_LEVEL_SPACES, _SHORT_BUFFER_ID
-from qualia.models import NodeId, BufferContentSetter, Li, DbRender
+from qualia.models import NodeId, BufferContentSetter, Li, MinimalDb
 from qualia.utils.common_utils import live_logger
 
 if TYPE_CHECKING:
@@ -150,7 +150,7 @@ def item_mismatch_idxs_from_end(list1: list, list2: list, minimum_idx: int) -> t
 
 
 def content_lines_to_buffer_lines(content_lines: Li, node_id: NodeId, level: int, expanded: bool, ordered: bool,
-                                  db: DbRender, transposed: bool) -> Li:
+                                  db: MinimalDb, transposed: bool) -> Li:
     if level == 0:
         buffer_lines = content_lines
     else:
@@ -166,7 +166,7 @@ def content_lines_to_buffer_lines(content_lines: Li, node_id: NodeId, level: int
     return buffer_lines
 
 
-def buffer_node_tracker(node_id: NodeId, transposed: bool, db: DbRender) -> str:
+def buffer_node_tracker(node_id: NodeId, transposed: bool, db: MinimalDb) -> str:
     has_other_ancestors = len(db.get_node_descendants(node_id, not transposed, True)) > 1
     return "[](" + (('T' if has_other_ancestors else 't') if transposed else ('N' if has_other_ancestors else 'n')
                     ) + (db.node_to_buffer_id(node_id) if _SHORT_BUFFER_ID else node_id) + ")  "
