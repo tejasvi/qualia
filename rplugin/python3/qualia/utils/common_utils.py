@@ -18,7 +18,7 @@ from uuid import UUID, uuid4
 
 from qualia.config import _LOGGER_NAME, _TRANSPOSED_FILE_PREFIX, \
     _CONFLICT_MARKER, _ENCRYPTION_KEY_FILE, _ENCRYPTION_USED, _SHORT_ID_STORE_BYTES, DEBUG, _GIT_FOLDER
-from qualia.models import NodeId, CustomCalledProcessError, El, Li, BufferNodeId, KeyNotFoundError
+from qualia.models import NodeId, CustomCalledProcessError, El, Li, ShortId, KeyNotFoundError
 from qualia.services.backup import removesuffix
 
 if TYPE_CHECKING:
@@ -178,12 +178,16 @@ def trigger_buffer_change(nvim):
                     async_=True)
 
 
+def _decompact_encoded_string(string: str, unpadded_length: int, padding: int):
+    return string.rjust(unpadded_length, 'A') + "=" * padding
+
+
 def compact_base32_decode(string: str) -> bytes:
     # Base32 stores 5 bits per letter. 00000 is represented as 'A'. The value encoded is in bytes (multiple of 8bits)
     # The length of encoded value will have multiple of 8 characters (8*5 bits representing 5 byte value)
     unpadded_length = ceil(_SHORT_ID_STORE_BYTES * 8 / 5)
     padding = (8 - unpadded_length % 8) % 8  # Need to be exact
-    byte_string = b32decode(string.rjust(unpadded_length, 'A') + "=" * padding, casefold=True)
+    byte_string = b32decode(_decompact_encoded_string(string, unpadded_length, padding), casefold=True)
     return byte_string
 
 
@@ -195,7 +199,7 @@ def compact_base64_decode(string: str) -> bytes:
     # Base64 stores 6 bits per letter. 000000 is represented as 'A'
     unpadded_length = ceil(_SHORT_ID_STORE_BYTES * 8 / 6)
     padding = 2  # Extra '=' padding is ignored
-    byte_string = b64decode(string.rjust(unpadded_length, 'A') + "=" * padding, validate=True)
+    byte_string = b64decode(_decompact_encoded_string(string, unpadded_length, padding), validate=True)
     return byte_string
 
 
@@ -203,12 +207,12 @@ def compact_base64_encode(byte_string: bytes) -> str:
     return b64encode(byte_string).decode().rstrip("=").lstrip('A') or 'A'
 
 
-def buffer_id_decoder(buffer_id: BufferNodeId) -> bytes:
+def buffer_id_decoder(buffer_id: ShortId) -> bytes:
     return compact_base32_decode(buffer_id)
 
 
-def buffer_id_encoder(buffer_id_bytes: bytes) -> BufferNodeId:
-    return cast(BufferNodeId, compact_base32_encode(buffer_id_bytes))
+def buffer_id_encoder(buffer_id_bytes: bytes) -> ShortId:
+    return cast(ShortId, compact_base32_encode(buffer_id_bytes))
 
 
 absent_node_content_lines = cast(Li, [''])
@@ -222,7 +226,7 @@ def removeprefix(input_string: str, suffix: str) -> str:
 
 
 class InvalidBufferNodeIdError(KeyNotFoundError):
-    def __init__(self, buffer_node_id: BufferNodeId):
+    def __init__(self, buffer_node_id: ShortId):
         live_logger.critical(f'Invalid buffer node ID: "{buffer_node_id}"'
                              + '. Modified hidden node ID by any chance?')
         super().__init__(buffer_node_id)

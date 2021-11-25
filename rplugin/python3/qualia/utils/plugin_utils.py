@@ -88,7 +88,7 @@ class PluginUtils:
         return switched_buffer, transposed, main_id
 
     def navigate_root_node(self, cur_file_path: str, db: MinimalDb) -> tuple[NodeId, bool]:
-        transposed = self.file_name_transposed(cur_file_path)
+        transposed = self.file_path_transposed(cur_file_path)
         root_id = db.get_root_id()
         self.replace_with_file(self.node_id_filepath(root_id, transposed, db), True)
         live_logger.info("Redirecting to root node")
@@ -230,15 +230,15 @@ class PluginUtils:
                                    'window': {'width': 0.95, 'height': 0.98}, 'options': fzf_options})
 
     @staticmethod
-    def file_name_transposed(file_path: str) -> bool:
+    def file_path_transposed(file_path: str) -> bool:
         return basename(file_path)[0] == _TRANSPOSED_FILE_PREFIX
 
     @staticmethod
-    def file_name_to_buffer_file_id(full_name: str, extension: str) -> BufferFileId:
-        return cast(BufferFileId, file_name_to_file_id(full_name, extension))
+    def file_name_to_buffer_file_id(full_name: str, extension: str) -> FileId:
+        return cast(FileId, file_name_to_file_id(full_name, extension))
 
     @staticmethod
-    def buffer_file_id_to_node_id(file_id: BufferFileId, db: MinimalDb) -> NodeId:
+    def buffer_file_id_to_node_id(file_id: FileId, db: MinimalDb) -> NodeId:
         if not _SHORT_BUFFER_ID:
             UUID(file_id)
             return cast(NodeId, file_id)
@@ -249,16 +249,16 @@ class PluginUtils:
         return node_id
 
     @staticmethod
-    def node_id_to_buffer_file_id(node_id: NodeId, db: MinimalDb) -> BufferFileId:
+    def node_id_to_buffer_file_id(node_id: NodeId, db: MinimalDb) -> FileId:
         buffer_id = db.node_to_buffer_id(node_id)
         buffer_id_bytes = buffer_id_decoder(buffer_id)
-        file_id = cast(BufferFileId, compact_base32_encode(buffer_id_bytes))
+        file_id = cast(FileId, compact_base32_encode(buffer_id_bytes))
         return file_id
 
     @staticmethod
     def filepath_node_id_transposed(file_path: str, db: MinimalDb) -> tuple[NodeId, bool]:
         file_name = basename(file_path)
-        transposed = PluginUtils.file_name_transposed(file_path)
+        transposed = PluginUtils.file_path_transposed(file_path)
         if transposed:
             file_name = file_name[1:]
 

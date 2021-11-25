@@ -56,7 +56,7 @@ class PluginDriver(PluginUtils):
                 while True:
                     try:
                         if root_view:
-                            db.set_node_view(root_view, self.file_name_transposed(self.current_buffer_file_path()))
+                            db.set_node_view(root_view, self.file_path_transposed(self.current_buffer_file_path()))
                         else:
                             while True:
                                 try:

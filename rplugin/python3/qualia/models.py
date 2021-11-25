@@ -17,8 +17,8 @@ StringifiedChildren = NewType("StringifiedChildren", str)
 StringifiedContent = NewType("StringifiedContent", str)
 NodeId = NewType("NodeId", str)
 BufferId = Tuple[int, str]
-BufferFileId = NewType("BufferFileId", str)
-BufferNodeId = NewType("BufferNodeId", str)
+FileId = NewType("FileId", str)
+ShortId = NewType("ShortId", str)
 Tree = dict[NodeId, Optional[dict]]
 LineRange = Tuple[int, int]
 AstMap = Tuple[int, int]
@@ -143,7 +143,7 @@ class MinimalDb(ABC):
         pass
 
     @abstractmethod
-    def node_to_buffer_id(self, node_id: NodeId) -> BufferNodeId:
+    def node_to_buffer_id(self, node_id: NodeId) -> ShortId:
         pass
 
     @abstractmethod
