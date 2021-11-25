@@ -6,8 +6,8 @@ from bloomfilter.bloomfilter_strategy import MURMUR128_MITZ_32
 from orderedset import OrderedSet
 
 from qualia.config import ENCRYPT_DB, _ROOT_ID_KEY, _DB_ENCRYPTION_ENABLED_KEY, _CLIENT_KEY, \
-    _SHORT_ID_STORE_BYTES
-from qualia.models import NodeId, El, Li, View, Tree, DbClient, BufferNodeId, MinimalDb
+    _SHORT_ID_STORE_BYTES, _SOURCE_ID_KEY
+from qualia.models import NodeId, El, Li, View, Tree, DbClient, ShortId, MinimalDb, SourceId
 from qualia.utils.common_utils import decrypt_lines, encrypt_lines, get_uuid, children_data_hash, \
     fernet, normalized_search_prefixes, buffer_id_encoder
 from qualia.utils.database_utils import LMDB
@@ -116,7 +116,7 @@ class _DbNodeIds(LMDB):
     def buffer_id_bytes_to_node_id(self, buffer_id_bytes) -> NodeId:
         return cast(NodeId, LMDB._get_key_val(buffer_id_bytes, self._cursors.buffer_id_bytes_node_id, True, False))
 
-    def node_to_buffer_id(self, node_id: NodeId) -> BufferNodeId:
+    def node_to_buffer_id(self, node_id: NodeId) -> ShortId:
         buffer_id_bytes = LMDB._get_key_val(node_id, self._cursors.node_id_buffer_id, False, True)
         if buffer_id_bytes is None:
             if self._cursors.buffer_id_bytes_node_id.last():
@@ -134,7 +134,7 @@ class _DbNodeIds(LMDB):
             LMDB._set_key_val(buffer_id_bytes, node_id, self._cursors.buffer_id_bytes_node_id, True)
 
         buffer_node_id = buffer_id_encoder(buffer_id_bytes)
-        return cast(BufferNodeId, buffer_node_id)
+        return cast(ShortId, buffer_node_id)
 
     def get_node_ids(self) -> list[NodeId]:
         self._cursors.content.first()

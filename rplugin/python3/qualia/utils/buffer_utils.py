@@ -7,7 +7,7 @@ from typing import cast, Optional, TYPE_CHECKING, Callable, Sequence
 from uuid import UUID
 
 from qualia.config import _COLLAPSED_BULLET, _TO_EXPAND_BULLET, _SHORT_BUFFER_ID
-from qualia.models import NODE_ID_ATTR, Tree, NodeId, BufferNodeId, DuplicateNodeException, LastSync, \
+from qualia.models import NODE_ID_ATTR, Tree, NodeId, ShortId, DuplicateNodeException, LastSync, \
     UncertainNodeChildrenException, AstMap, Li, KeyNotFoundError, MinimalDb
 from qualia.utils.common_utils import get_time_uuid, buffer_id_decoder, removeprefix, InvalidBufferNodeIdError
 
@@ -31,7 +31,7 @@ def get_md_ast(content_lines: Li) -> SyntaxTreeNode:
     return root_ast
 
 
-def buffer_to_node_id(buffer_node_id: BufferNodeId, db: MinimalDb) -> NodeId:
+def buffer_to_node_id(buffer_node_id: ShortId, db: MinimalDb) -> NodeId:
     buffer_id_bytes = buffer_id_decoder(buffer_node_id)
     try:
         node_id = db.buffer_id_bytes_to_node_id(buffer_id_bytes)
@@ -45,7 +45,7 @@ def get_id_line(line: str, db: MinimalDb) -> tuple[NodeId, str]:
     id_match = id_regex.match(line)
     if id_match:
         line = removeprefix(line, id_match.group(0))
-        buffer_node_id = BufferNodeId(id_match.group(1))
+        buffer_node_id = ShortId(id_match.group(1))
         if _SHORT_BUFFER_ID:
             node_id = buffer_to_node_id(buffer_node_id, db)
         else:

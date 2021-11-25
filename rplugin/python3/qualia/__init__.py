@@ -13,17 +13,17 @@ from qualia.config import _ENCRYPTION_USED
 #
 # install_import_hook('qualia')
 
-# if True or DEBUG and ATTACH_PYCHARM:
-#     # https://www.jetbrains.com/help/pycharm/remote-debugging-with-product.html#remote-debug-config
-#     try:
-#         import pydevd_pycharm
-#
-#         pydevd_pycharm.settrace('localhost', port=9001, stdoutToServer=True, stderrToServer=True, suspend=False)
-#         from time import time
-#
-#         print(f"Starting at {time()}s")
-#     except ConnectionRefusedError:
-#         pass
+if True or DEBUG and ATTACH_PYCHARM:
+    # https://www.jetbrains.com/help/pycharm/remote-debugging-with-product.html#remote-debug-config
+    try:
+        import pydevd_pycharm
+
+        pydevd_pycharm.settrace('localhost', port=9001, stdoutToServer=True, stderrToServer=True, suspend=False)
+        from time import time
+
+        print(f"Starting at {time()}s")
+    except ConnectionRefusedError:
+        pass
 
 
 def _get_plugin_class() -> object:
