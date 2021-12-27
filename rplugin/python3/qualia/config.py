@@ -18,7 +18,9 @@ FIREBASE_WEB_APP_CONFIG = {
     "measurementId": "G-BPNP22GS5X"
 }
 
-_GIT_TOKEN = 'ghp_QJSHBmXvDAbjiiI' 'BHTDEb3yryLofv52dcTbP'
+ENABLE_GIT_SYNC = False
+
+_GIT_TOKEN = 'ghp_QJSHBmXvDAbjiiIBHTDEb3yryLofv52dcTbp'
 _GIT_REPOSITORY = "github.com/tejasvi8874/test"
 GIT_AUTHORIZED_REMOTE = f"https://{_GIT_TOKEN}{'@' if _GIT_TOKEN else ''}{_GIT_REPOSITORY}"
 GIT_SEARCH_URL = f"https://{_GIT_REPOSITORY}/search?q="

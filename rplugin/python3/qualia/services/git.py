@@ -11,7 +11,7 @@ path.append(Path(__file__).parent.parent.as_posix())  # noqa: E402
 from typing import Optional, TYPE_CHECKING, cast
 
 from qualia.config import GIT_BRANCH, GIT_AUTHORIZED_REMOTE, _GIT_DATA_FOLDER, \
-    _GIT_ENCRYPTION_ENABLED_FILE_NAME, _GIT_FOLDER
+    _GIT_ENCRYPTION_ENABLED_FILE_NAME, _GIT_FOLDER, ENABLE_GIT_SYNC
 from qualia.models import CustomCalledProcessError, GitChangedNodes, GitMergeError, KeyNotFoundError, NodeId, \
     InvalidFileChildrenLine
 from qualia.utils.bootstrap_utils import repository_setup, bootstrap
@@ -24,11 +24,14 @@ from qualia.services.utils.git_utils import create_markdown_file, repository_fil
 if TYPE_CHECKING:
     from pynvim import Nvim
 
+
 def sync_with_git(nvim):
     # type:(Optional[Nvim]) -> None
     """
     Invariant: State of git repository is synced with DB before starting git sync.
     """
+    if not ENABLE_GIT_SYNC:
+        return
     live_logger.debug("Git sync started")
     if repository_setup.wait(60):
         live_logger.error("Repository setup not yet finished")

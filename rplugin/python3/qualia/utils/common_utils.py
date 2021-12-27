@@ -227,8 +227,9 @@ def removeprefix(input_string: str, suffix: str) -> str:
 
 class InvalidBufferNodeIdError(KeyNotFoundError):
     def __init__(self, buffer_node_id: ShortId):
-        live_logger.critical(f'Invalid buffer node ID: "{buffer_node_id}"'
-                             + '. Modified hidden node ID by any chance?')
+        if buffer_node_id != 'A':
+            live_logger.critical(f'Node ID "{buffer_node_id}" not found')
         super().__init__(buffer_node_id)
+
 
 counter = itertools.count()
