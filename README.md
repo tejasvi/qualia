@@ -25,6 +25,7 @@
     * Add `Plug 'tejasvi/qualia'` to Vim config and then restart.
     * Do `:PlugInstall|UpdateRemotePlugins`.
     * Run with `vi .q.md` or `:e .q.md`.
+    * Shortcuts use `<Leader>` which is assumed to be `Space` in the readme.
 
 # Usage
 
@@ -73,6 +74,7 @@ To add a child node, create a list item. To duplicate a node, copy and paste the
 
 * Files are used for displaying content instead of storing.
 * File names are "pointers" to nodes and file path is irrelevant.<br>E.g. Node "a" can be opened with `vi a.q.md` from anywhere.
+* <kbd>Space</kbd><kbd>p</kbd> to toggle parsing of buffer changes. Useful during advanced node manipulation.
 * <kbd>Space</kbd><kbd>/</kbd> to fuzzy search nodes containing specific term and <kbd>Space</kbd><kbd>?</kbd> to fuzzy search all nodes.
 * <kbd>Space</kbd><kbd>L</kbd> to open inverted connection graph and <kbd>Space</kbd><kbd>K</kbd> to hoist node in a new buffer.
 * `:ListOrphans` to list unaccessible nodes not linked by others. `:RemoveOrphans` to delete orphan nodes.
