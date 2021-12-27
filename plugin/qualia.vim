@@ -57,7 +57,6 @@ if !(exists('g:qualia_no_keymap') && g:qualia_no_keymap)
             call extend(maplist, ['<2-LeftMouse> :ToggleFold', '<3-LeftMouse> :FoldLevel 9', '<RightMouse> <LeftMouse>:TransposeNode'])
 
             for mapstr in maplist
-                echomsg mapstr
                 execute 'nnoremap <unique><buffer><silent>'.mapstr.'<CR>'
             endfor
             let b:qualia_key_map=1

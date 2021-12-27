@@ -23,4 +23,14 @@ mkdir -p ~/.local/share/binder
 cp binder/workspace.json ~/.local/share/binder/workspace.json
 jupyter lab workspaces import ~/.local/share/binder/workspace.json
 
+echo 'echo "Welcome to Qualia! Enter vi .q.md and type some text to get started!
+
+Example structure:
+
+Current node content
+* Child 1
+* Child 2
+    * Grandchild
+"' >> ~/.bashrc
+
 #nvim ~/a.q.md

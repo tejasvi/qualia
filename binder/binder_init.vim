@@ -26,6 +26,8 @@ else
       \| endif
 endif
 
+autocmd CursorHoldI *.q.md TriggerSync 1
+
 let g:vim_markdown_folding_disabled = 1
 let g:vim_markdown_emphasis_multiline = 0
 let g:vim_markdown_fenced_languages = ['css', 'javascript', 'js=javascript', 'json=javascript', 'html', 'python', 'cpp', 'bash=sh', 'java']
