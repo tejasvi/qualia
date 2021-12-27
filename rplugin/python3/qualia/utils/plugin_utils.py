@@ -4,18 +4,16 @@ from pathlib import Path
 from sys import executable
 from time import sleep
 from typing import Optional, TYPE_CHECKING, cast
-from uuid import UUID
 
 from pynvim import Nvim, NvimError
 
-from qualia.config import NVIM_DEBUG_PIPE, _FZF_LINE_DELIMITER, _TRANSPOSED_FILE_PREFIX, _SHORT_BUFFER_ID
+from qualia.config import NVIM_DEBUG_PIPE, _FZF_LINE_DELIMITER, _TRANSPOSED_FILE_PREFIX, _SHORT_ID
 from qualia.config import _FILE_FOLDER
-from qualia.database import Database
+from qualia.database import Database, MaDatabase
 from qualia.models import NodeId, DuplicateNodeException, UncertainNodeChildrenException, View, BufferId, LastSync, \
-    LineInfo, KeyNotFoundError, FileId, MinimalDb, SourceId
-from qualia.utils.buffer_utils import buffer_to_node_id
-from qualia.utils.common_utils import live_logger, exception_traceback, file_name_to_file_id, buffer_id_decoder, \
-    buffer_id_encoder, compact_base32_encode, compact_base32_decode
+    LineInfo, KeyNotFoundError, FileId, MinimalDb, SourceId, DirId, NodeShortId, SourceShortId
+from qualia.utils.buffer_utils import expand_to_node_id, expand_to_source_id
+from qualia.utils.common_utils import live_logger, exception_traceback, get_id_in_file_name
 
 if TYPE_CHECKING:
     from pynvim.api import Buffer
@@ -33,6 +31,7 @@ class PluginUtils:
         self.buffer_last_sync: dict[BufferId, LastSync] = defaultdict(LastSync)
         self.last_git_sync = 0.
         self.enabled: bool = True
+        self.cached_dbs: dict[str, MinimalDb] = {}
 
     def replace_with_file(self, filepath: str, replace_buffer: bool) -> None:
         # self.nvim.command(f"echom bufname() bufnr() getbufinfo(bufnr())[0].changed '{filepath}' b:changedtick | edit {filepath}")
@@ -54,45 +53,47 @@ class PluginUtils:
         assert vim_path, "Current buffer file path is empty (new buffer?)"
         return Path(vim_path).resolve().as_posix()
 
-    def navigate_node(self, node_id: NodeId, replace_buffer: bool, db: MinimalDb) -> None:
-        transposed = self.file_path_transposed(self.nvim.current.buffer.name)
-        filepath = self.node_id_filepath(node_id, transposed, db)
+    def navigate_node(self, view: View, replace_buffer: bool, db: MaDatabase) -> None:
+        filepath = self.node_id_filepath(view, db)
         if Path(self.current_buffer_file_path()) != Path(filepath):
             self.replace_with_file(filepath, replace_buffer)
 
-    def process_view(self, view: View, db: MinimalDb) -> tuple[bool, bool, NodeId]:
+    def process_view(self, view: View, db: MinimalDb) -> bool:
         switched_buffer = False
         try:
-            cur_main_id, cur_transposed = self.filepath_node_id_transposed(self.current_buffer_file_path(), db)
+            cur_view = self.filepath_view(self.current_buffer_file_path(), db)
         except ValueError:
             switched_buffer = True
         else:
-            if not (view.main_id == cur_main_id and view.transposed == cur_transposed):
+            if not (view.source_id == cur_view.source_id and view.main_id == cur_view.main_id and view.transposed == cur_view.transposed):
                 switched_buffer = True
         if switched_buffer:
-            self.replace_with_file(self.node_id_filepath(view.main_id, view.transposed, db), True)
-        return switched_buffer, view.transposed, view.main_id
+            self.replace_with_file(self.node_id_filepath(view, db), True)
+        return switched_buffer
 
-    def process_filepath(self, file_path: str, db: MinimalDb) -> tuple[bool, bool, NodeId]:
+    def process_filepath(self, file_path: str, db: MinimalDb) -> tuple[bool, View]:
         switched_buffer = True
         try:
-            main_id, transposed = self.filepath_node_id_transposed(file_path, db)
+            view = self.filepath_view(file_path, db)
         except ValueError:
-            main_id, transposed = self.navigate_root_node(file_path, db)
+            view = self.navigate_root_node(file_path, db)
         else:
-            if Path(file_path).parent != _FILE_FOLDER:
-                self.navigate_node(main_id, True, db)
+            if Path(file_path).parent.parent.absolute() != _FILE_FOLDER.absolute():
+                self.navigate_node(view, True, db.)
             else:
                 switched_buffer = False
 
-        return switched_buffer, transposed, main_id
+        return switched_buffer, view
 
-    def navigate_root_node(self, cur_file_path: str, db: MinimalDb) -> tuple[NodeId, bool]:
-        transposed = self.file_path_transposed(cur_file_path)
-        root_id = db.get_root_id()
-        self.replace_with_file(self.node_id_filepath(root_id, transposed, db), True)
+    @staticmethod
+    def unmutable_db_error() -> None:
+        live_logger.critical("Sorry, the data source does not support modifications.")
+
+    def navigate_root_node(self, cur_file_path: str, db: MinimalDb) -> View:
+        view = View(db.get_root_id(), db.get_set_source_id(), None, self.file_path_transposed(cur_file_path))
+        self.replace_with_file(self.node_id_filepath(view, db), True)
         live_logger.info("Redirecting to root node")
-        return root_id, transposed
+        return view
 
     def current_buffer_id(self) -> Optional[BufferId]:
         buffer_number: int = self.nvim.current.buffer.number
@@ -101,7 +102,7 @@ class PluginUtils:
         except OSError:
             return None
         else:
-            return buffer_number, Path(file_path).as_posix()
+            return buffer_number, Path(file_path).absolute().as_posix()
 
     def current_line_number(self) -> int:
         return self.nvim.funcs.line('.') - 1
@@ -169,6 +170,7 @@ class PluginUtils:
         node_id = line_info.node_id
         parent_view = line_info.parent_view
         view = View(node_id,
+                    parent_view.source_id,
                     parent_view.sub_tree[node_id] if parent_view.sub_tree else {},
                     parent_view.transposed)
         return view
@@ -221,9 +223,9 @@ class PluginUtils:
     fzf_sink_command = "NodeFzfSink"
 
     def fzf_run(self, fzf_lines: list[str], query: str, ansi_escape_codes: bool) -> None:
-        fzf_options = ['--delimiter', _FZF_LINE_DELIMITER, '--with-nth', '2..', '--query', query, '--preview',
+        fzf_options = ['--delimiter', _FZF_LINE_DELIMITER, '--with-nth', '3..', '--query', query, '--preview',
                        executable + " " + Path(__file__).parent.parent.joinpath('services/preview.py').as_posix()
-                       + " {1} 1", '--preview-window', ":wrap"]
+                       + " {1} {2} 1", '--preview-window', ":wrap"]
         if ansi_escape_codes:
             fzf_options.append('--ansi')
         self.nvim.call("fzf#run", {'source': fzf_lines, 'sink': self.fzf_sink_command,
@@ -234,62 +236,48 @@ class PluginUtils:
         return basename(file_path)[0] == _TRANSPOSED_FILE_PREFIX
 
     @staticmethod
-    def file_name_to_buffer_file_id(full_name: str, extension: str) -> FileId:
-        return cast(FileId, file_name_to_file_id(full_name, extension))
+    def source_id_to_short_id(source_id: SourceId, db: MaDatabase) -> SourceShortId:
+        return db.full_to_short_id(source_id, False) if _SHORT_ID else source_id
 
     @staticmethod
-    def buffer_file_id_to_node_id(file_id: FileId, db: MinimalDb) -> NodeId:
-        if not _SHORT_BUFFER_ID:
-            UUID(file_id)
-            return cast(NodeId, file_id)
-
-        buffer_id_bytes = compact_base32_decode(file_id)
-        buffer_id = buffer_id_encoder(buffer_id_bytes)
-        node_id = buffer_to_node_id(buffer_id, db)
-        return node_id
+    def node_id_to_short_id(node_id: NodeId) -> NodeShortId:
+        with Database.main_db() as db:
+            return db.full_to_short_id(node_id, True) if _SHORT_ID else node_id
 
     @staticmethod
-    def node_id_to_buffer_file_id(node_id: NodeId, db: MinimalDb) -> FileId:
-        buffer_id = db.node_to_buffer_id(node_id)
-        buffer_id_bytes = buffer_id_decoder(buffer_id)
-        file_id = cast(FileId, compact_base32_encode(buffer_id_bytes))
-        return file_id
-
-    @staticmethod
-    def filepath_node_id_transposed(file_path: str, db: MinimalDb) -> tuple[NodeId, bool]:
-        file_name = basename(file_path)
+    def filepath_view(file_path: str, db: MinimalDb) -> View:
+        file_path_obj = Path(file_path)
         transposed = PluginUtils.file_path_transposed(file_path)
-        if transposed:
-            file_name = file_name[1:]
-
-        file_id = PluginUtils.file_name_to_buffer_file_id(file_name, ".q.md")
+        node_short_id = cast(NodeShortId, get_id_in_file_name(file_path_obj.name, ".q.md"))
+        source_short_id = cast(SourceShortId, file_path_obj.parent.name)
 
         try:
-            node_id = PluginUtils.buffer_file_id_to_node_id(file_id, db)
-            db.get_node_content_lines(node_id)
+            node_id = expand_to_node_id(node_short_id)
+            source_id = expand_to_source_id(source_short_id)
+            db.get_node_content_lines(node_id, temporary)
         except KeyNotFoundError:
             raise ValueError(file_path)
 
-        return node_id, transposed
+        return View(node_id, source_id, None, transposed)
 
     @staticmethod
-    def node_id_filepath(node_id: NodeId, transposed: bool, db: MinimalDb) -> str:
-        file_name = (PluginUtils.node_id_to_buffer_file_id(node_id, db) if _SHORT_BUFFER_ID else node_id) + ".q.md"
-        if transposed:
+    def node_id_filepath(view: View, db: MaDatabase) -> str:
+        file_name = PluginUtils.node_id_to_short_id(view.main_id) + ".q.md"
+        if view.transposed:
             file_name = _TRANSPOSED_FILE_PREFIX + file_name
-        return _FILE_FOLDER.joinpath(file_name).as_posix()
+        return _FILE_FOLDER.joinpath(PluginUtils.source_id_to_short_id(view.source_id, db)).joinpath(file_name).as_posix()
 
 
-def get_orphan_node_ids(db: Database) -> list[NodeId]:
+def get_orphan_node_ids(db: MinimalDb) -> list[NodeId]:
     root_id = db.get_root_id()
     visited_node_ids = {root_id}
 
     node_stack = [root_id]
     while node_stack:
         node_id = node_stack.pop()
-        node_children_ids = db.get_node_descendants(node_id, False, True)
+        node_children_ids = db.get_node_descendants(node_id, False, True, temporary)
         if node_children_ids:
             node_stack.extend((child_id for child_id in node_children_ids if child_id not in visited_node_ids))
             visited_node_ids.update(node_children_ids)
-    orphan_node_ids = [node_id for node_id in db.get_node_ids() if node_id not in visited_node_ids]
+    orphan_node_ids = [node_id for node_id in db.get_node_ids(temporary) if node_id not in visited_node_ids]
     return orphan_node_ids

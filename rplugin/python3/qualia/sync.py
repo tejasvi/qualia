@@ -8,7 +8,7 @@ from typing import cast, Union, TYPE_CHECKING, Iterator
 from orderedset import OrderedSet
 
 from qualia.database import Database
-from qualia.models import View, NodeId, LastSync, Li, ProcessState, Tree, NODE_ID_ATTR, AstMap, MinimalDb
+from qualia.models import View, NodeId, LastSync, Li, ProcessState, Tree, NODE_ID_ATTR, AstMap, MinimalDb, MutableDb
 from qualia.services.realtime import Realtime
 from qualia.services.utils.realtime_utils import sync_with_realtime_db
 from qualia.utils.buffer_utils import get_md_ast, get_id_line, get_ast_sub_lists, raise_if_duplicate_sibling, \
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from markdown_it.tree import SyntaxTreeNode
 
 
-def sync_buffer(buffer_lines: Li, main_id: NodeId, last_sync: LastSync, db: Database,
+def sync_buffer(buffer_lines: Li, main_id: NodeId, last_sync: LastSync, db: MutableDb,
                 transposed: bool, realtime_session: Realtime, git_sync_event: Event) -> View:
     if main_id in last_sync:
         main_view, changes = ParseProcess().process_lines(buffer_lines, main_id, last_sync, db, transposed)
@@ -46,7 +46,6 @@ class ParseProcess:
         View, ProcessState]:
         if not lines:
             lines = cast(Li, [''])
-        self.db = db
         self._changes = ProcessState()
         self._lines = lines
 
@@ -69,7 +68,7 @@ class ParseProcess:
         content_indent = 0 if is_buffer_ast else self._lines[content_start_line_num].index(
             list_item_ast.markup) + 2
         first_line = self._lines[content_start_line_num][content_indent:]
-        node_id, id_line = get_id_line(first_line, self.db)
+        node_id, id_line = get_id_line(first_line)
         list_item_ast.meta[NODE_ID_ATTR] = node_id
 
         sub_lists = get_ast_sub_lists(list_item_ast)

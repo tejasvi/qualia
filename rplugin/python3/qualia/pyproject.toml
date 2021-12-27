@@ -1,0 +1,6 @@
+[tool.vulture]
+exclude = ["venv", ".mypy_cache", ".idea"]
+# ignore_names = ["visit_*", "do_*"]
+min_confidence = 80
+sort_by_size = true
+verbose = true

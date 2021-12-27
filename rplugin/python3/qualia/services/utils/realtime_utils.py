@@ -9,10 +9,10 @@ from ntplib import NTPClient, NTPException
 from orderedset import OrderedSet
 
 from qualia.config import ENCRYPT_REALTIME, FIREBASE_WEB_APP_CONFIG
-from qualia.database import Database
+from qualia.database import Database, qdb
 from qualia.models import RealtimeBroadcastPacket, NodeId, RealtimeContent, RealtimeStringifiedData, \
     RealtimeStringifiedContent, RealtimeStringifiedChildren, StringifiedChildren, \
-    StringifiedContent, El, Li, RealtimeChildren
+    StringifiedContent, El, Li, RealtimeChildren, MinimalDb, MutableDb
 from qualia.services.utils.service_utils import content_hash
 from qualia.utils.common_utils import conflict, live_logger, \
     ordered_data_hash, StartLoggedThread, exception_traceback, decrypt_lines, encrypt_lines, \
@@ -44,12 +44,12 @@ def merge_children_with_local(node_id: NodeId, new_children_ids: Iterable[NodeId
     return OrderedSet(sorted(merged_children_ids))  # To prevent cyclic conflicts)
 
 
-def merge_content_with_local(node_id: NodeId, new_content_lines: Li, db: Database) -> Li:
-    db_content_lines = db.get_node_content_lines(node_id)
+def merge_content_with_local(node_id: NodeId, new_content_lines: Li, db: MinimalDb) -> Li:
+    db_content_lines = db.get_node_content_lines(node_id, temporary)
     return new_content_lines if db_content_lines is None else conflict(new_content_lines, db_content_lines)
 
 
-def process_content_broadcast(data_dict: RealtimeStringifiedContent, db: Database, content_encrypted: bool) -> \
+def process_content_broadcast(data_dict: RealtimeStringifiedContent, db: MutableDb, content_encrypted: bool) -> \
         tuple[
             bool, RealtimeContent]:
     content_conflicts: RealtimeContent = {}

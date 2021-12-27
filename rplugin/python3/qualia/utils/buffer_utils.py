@@ -6,10 +6,11 @@ from re import compile
 from typing import cast, Optional, TYPE_CHECKING, Callable, Sequence
 from uuid import UUID
 
-from qualia.config import _COLLAPSED_BULLET, _TO_EXPAND_BULLET, _SHORT_BUFFER_ID
-from qualia.models import NODE_ID_ATTR, Tree, NodeId, ShortId, DuplicateNodeException, LastSync, \
-    UncertainNodeChildrenException, AstMap, Li, KeyNotFoundError, MinimalDb
-from qualia.utils.common_utils import get_time_uuid, buffer_id_decoder, removeprefix, InvalidBufferNodeIdError
+from qualia.config import _COLLAPSED_BULLET, _TO_EXPAND_BULLET, _SHORT_ID
+from qualia.database import qdb, Database, MuDatabase
+from qualia.models import NODE_ID_ATTR, Tree, NodeId, NodeShortId, DuplicateNodeException, LastSync, \
+    UncertainNodeChildrenException, AstMap, Li, KeyNotFoundError, MinimalDb, SourceShortId, SourceId
+from qualia.utils.common_utils import get_time_uuid, short_id_decoder, removeprefix, InvalidShortIdError
 
 if TYPE_CHECKING:
     from markdown_it.tree import SyntaxTreeNode
@@ -31,26 +32,43 @@ def get_md_ast(content_lines: Li) -> SyntaxTreeNode:
     return root_ast
 
 
-def buffer_to_node_id(buffer_node_id: ShortId, db: MinimalDb) -> NodeId:
-    buffer_id_bytes = buffer_id_decoder(buffer_node_id)
-    try:
-        node_id = db.buffer_id_bytes_to_node_id(buffer_id_bytes)
-    except (KeyNotFoundError, binascii.Error):
-        raise InvalidBufferNodeIdError(buffer_node_id)
+def expand_to_source_id(source_short_id: SourceShortId) -> SourceId:
+    if not _SHORT_ID:
+        UUID(source_short_id)
+        return cast(SourceId, source_short_id)
+    short_id_bytes = short_id_decoder(source_short_id)
+    with Database.main_db() as db:
+        try:
+            source_id = db.short_id_bytes_to_full_id(short_id_bytes)
+        except (KeyNotFoundError, binascii.Error):
+            raise InvalidShortIdError(source_short_id)
+    return source_id
+
+
+def expand_to_node_id(short_id: NodeShortId) -> NodeId:
+    if not _SHORT_ID:
+        UUID(short_id)
+        return cast(NodeId, short_id)
+    short_id_bytes = short_id_decoder(short_id)
+    with Database()._main_db() as db:
+        try:
+            node_id = db.short_id_bytes_to_full_id(short_id_bytes)
+        except (KeyNotFoundError, binascii.Error):
+            raise InvalidShortIdError(short_id)
     return node_id
 
 
-def get_id_line(line: str, db: MinimalDb) -> tuple[NodeId, str]:
+def get_id_line(line: str) -> tuple[NodeId, str]:
     id_regex = compile(r"\[]\(.(.+?)\) {0,2}")
     id_match = id_regex.match(line)
     if id_match:
         line = removeprefix(line, id_match.group(0))
-        buffer_node_id = ShortId(id_match.group(1))
-        if _SHORT_BUFFER_ID:
-            node_id = buffer_to_node_id(buffer_node_id, db)
+        short_node_id = NodeShortId(id_match.group(1))
+        if _SHORT_ID:
+            node_id = expand_to_node_id(short_node_id)
         else:
-            UUID(buffer_node_id)
-            node_id = cast(NodeId, buffer_node_id)
+            UUID(short_node_id)
+            node_id = cast(NodeId, short_node_id)
     else:
         node_id = get_time_uuid()
     return node_id, line

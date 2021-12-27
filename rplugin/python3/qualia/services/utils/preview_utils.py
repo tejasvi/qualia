@@ -3,18 +3,18 @@ from sys import argv
 from typing import Optional, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from qualia.models import NodeId, Li
+    from qualia.models import NodeId, Li, SourceId, MinimalDb
     from qualia.database import Database
     from multiprocessing.connection import Connection
 
 
 def get_descendant_preview_lines(node_id, db, transposed, separator_width, max_level):
-    # type: (NodeId, Database, bool, int, int) ->  Li
+    # type: (NodeId, MinimalDb, bool, int, int) ->  Li
     from qualia.models import Li
 
     descendant_preview_lines = []
 
-    descendant_node_ids = db.get_node_descendants(node_id, transposed, True)
+    descendant_node_ids = db.get_node_descendants(node_id, transposed, True, temporary)
     if descendant_node_ids:
         descendant_preview_lines.append(separator_width * ('━' if transposed else '─'))
 
@@ -23,9 +23,9 @@ def get_descendant_preview_lines(node_id, db, transposed, separator_width, max_l
         cur_descendant_node_ids, level = stack.pop()
         for descendant_id in cur_descendant_node_ids:
             indent_spaces = " " * 4 * level
-            sub_descendant_node_ids = db.get_node_descendants(descendant_id, transposed, True)
-            has_other_ancestors = len(db.get_node_descendants(descendant_id, not transposed, False)) != 0
-            descendant_content_lines = db.get_node_content_lines(descendant_id)
+            sub_descendant_node_ids = db.get_node_descendants(descendant_id, transposed, True, temporary)
+            has_other_ancestors = len(db.get_node_descendants(descendant_id, not transposed, False, temporary)) != 0
+            descendant_content_lines = db.get_node_content_lines(descendant_id, temporary)
 
             descendant_preview_lines.append(indent_spaces
                                             + (('▶' if transposed else '‣')
@@ -54,8 +54,8 @@ def pad_lines(lines, width, min_height):
     return lines
 
 
-def preview_node(node_id, separator_width, output_height, depth):
-    # type:( NodeId, int, int, int) -> Li
+def preview_node(node_id, source_id, separator_width, output_height, depth):
+    # type:( NodeId, SourceId, int, int, int) -> Li
     from qualia.models import KeyNotFoundError, Li
     from qualia.database import Database
 
@@ -66,7 +66,7 @@ def preview_node(node_id, separator_width, output_height, depth):
     with Database() as db:
         try:
             preview_lines.extend(
-                pad_lines(db.get_node_content_lines(node_id), separator_width, min_content_height))
+                pad_lines(db.get_node_content_lines(node_id, temporary), separator_width, min_content_height))
         except KeyNotFoundError:
             raise Exception(f"Requested Node ID does not exist on the database used by ")
         for transposed, min_height in ((False, min_children_height), (True, min_parents_height)):
@@ -80,9 +80,10 @@ class InvalidParameters(Exception):
     pass
 
 
-def parse_args() -> tuple[bool, str, int, int]:
+def parse_args() -> tuple[bool, str, str, int, int]:
     try:
         node_id_arg = argv[1]
+        source_id_arg = argv[2]
         # from uuid import UUID
         # UUID(node_id_arg) # skip to shave 20ms
     except (IndexError, ValueError) as e:
@@ -92,11 +93,11 @@ def parse_args() -> tuple[bool, str, int, int]:
     output_width = int(environ.get('FZF_PREVIEW_COLUMNS', 10)) - 1
     output_height = int(environ.get('FZF_PREVIEW_LINES', 20)) - 1
     try:
-        attach_running_process = True if len(argv) == 3 and bool(int(argv[2])) else False
+        attach_running_process = True if len(argv) == 4 and bool(int(argv[3])) else False
     except ValueError:
         print(f"Invalid arguments. Passed argument list: {argv=}")
         raise InvalidParameters
-    return attach_running_process, node_id_arg, output_width, output_height
+    return attach_running_process, node_id_arg, source_id_arg, output_width, output_height
 
 
 def connect_listener():

@@ -3,7 +3,7 @@ from time import sleep
 from typing import Callable, Optional
 
 from qualia.database import Database
-from qualia.models import NodeId, KeyNotFoundError
+from qualia.models import NodeId, KeyNotFoundError, MinimalDb
 from qualia.utils.common_utils import StartLoggedThread, live_logger, exception_traceback, ordered_data_hash
 
 
@@ -27,8 +27,8 @@ def get_task_firing_event(task: Callable, throttle_seconds: float) -> Event:
     return service_event
 
 
-def content_hash(node_id: NodeId, db: Database) -> Optional[str]:
+def content_hash(node_id: NodeId, db: MinimalDb) -> Optional[str]:
     try:
-        return ordered_data_hash(db.get_node_content_lines(node_id))
+        return ordered_data_hash(db.get_node_content_lines(node_id, temporary))
     except KeyNotFoundError:
         return None

@@ -1,7 +1,8 @@
 from difflib import SequenceMatcher
 from typing import Iterator, Union, cast, Optional, TYPE_CHECKING
 
-from qualia.config import DEBUG, _EXPANDED_BULLET, _COLLAPSED_BULLET, NEST_LEVEL_SPACES, _SHORT_BUFFER_ID
+from qualia.config import DEBUG, _EXPANDED_BULLET, _COLLAPSED_BULLET, NEST_LEVEL_SPACES, _SHORT_ID
+from qualia.database import Database
 from qualia.models import NodeId, BufferContentSetter, Li, MinimalDb
 from qualia.utils.common_utils import live_logger
 
@@ -167,6 +168,12 @@ def content_lines_to_buffer_lines(content_lines: Li, node_id: NodeId, level: int
 
 
 def buffer_node_tracker(node_id: NodeId, transposed: bool, db: MinimalDb) -> str:
-    has_other_ancestors = len(db.get_node_descendants(node_id, not transposed, True)) > 1
-    return "[](" + (('T' if has_other_ancestors else 't') if transposed else ('N' if has_other_ancestors else 'n')
-                    ) + (db.node_to_buffer_id(node_id) if _SHORT_BUFFER_ID else node_id) + ")  "
+    has_other_ancestors = len(db.get_node_descendants(node_id, not transposed, True, temporary)) > 1
+    signal_string = 't' if transposed else 'n'
+    if has_other_ancestors:
+        signal_string.upper()
+    if _SHORT_ID:
+        id_string = db.main_db.full_to_short_id(node_id, True)
+    else:
+        id_string = node_id
+    return f"[]({signal_string}{id_string})  "

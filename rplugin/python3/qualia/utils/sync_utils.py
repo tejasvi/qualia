@@ -4,15 +4,15 @@ from orderedset import OrderedSet
 
 from qualia.database import Database
 from qualia.models import View, ProcessState, LastSync, RealtimeBroadcastPacket, NodeId, RealtimeChildren, Li, \
-    RealtimeContent, KeyNotFoundError
+    RealtimeContent, KeyNotFoundError, MutableDb
 from qualia.utils.common_utils import ordered_data_hash, conflict, children_data_hash, \
     absent_node_content_lines
 
 
-def sync_with_db(root_view: Optional[View], changes: ProcessState, last_sync: LastSync, db: Database,
+def sync_with_db(root_view: Optional[View], changes: ProcessState, last_sync: LastSync, db: MutableDb,
                  transposed: bool, realtime: bool) -> RealtimeBroadcastPacket:
     if root_view:
-        db.set_node_view(root_view, transposed)
+        db.set_node_view(root_view)
 
     realtime_content_data = sync_content(changes.changed_content_map, db, last_sync, realtime)
     realtime_children_data = sync_descendants(changes.changed_descendants_map, db, last_sync, transposed,
@@ -20,14 +20,14 @@ def sync_with_db(root_view: Optional[View], changes: ProcessState, last_sync: La
     return {"content": realtime_content_data, "children": realtime_children_data} if realtime else {}
 
 
-def sync_descendants(changed_descendants_map: dict[NodeId, OrderedSet[NodeId]], db: Database,
+def sync_descendants(changed_descendants_map: dict[NodeId, OrderedSet[NodeId]], db: MutableDb,
                      last_sync: LastSync, transposed: bool, realtime: bool) -> RealtimeChildren:
     new_descendants = []
     realtime_children_data = {}
     _dummy_children: list[NodeId] = []
 
     for node_id, descendants_ids in changed_descendants_map.items():
-        db_descendants_ids = db.get_node_descendants(node_id, transposed, False)
+        db_descendants_ids = db.get_node_descendants(node_id, transposed, False, temporary)
         if node_id not in last_sync or (db_descendants_ids != last_sync[node_id].descendants_ids):
             descendants_ids.update(db_descendants_ids)
 
@@ -45,19 +45,19 @@ def sync_descendants(changed_descendants_map: dict[NodeId, OrderedSet[NodeId]], 
 
     if realtime and transposed:
         for parent_id, (last_hash, _dummy_children) in realtime_children_data.items():
-            new_children_node_ids = list(db.get_node_descendants(parent_id, False, False))
+            new_children_node_ids = list(db.get_node_descendants(parent_id, False, False, temporary))
             realtime_children_data[parent_id] = last_hash, new_children_node_ids
 
     return realtime_children_data
 
 
-def sync_content(changed_content_map: dict[NodeId, Li], db: Database, last_sync: LastSync,
+def sync_content(changed_content_map: dict[NodeId, Li], db: MutableDb, last_sync: LastSync,
                  realtime) -> RealtimeContent:
     realtime_content_data: RealtimeContent = {}
     for node_id, content_lines in changed_content_map.items():
         overriden_lines = absent_node_content_lines
         try:
-            db_content_lines = db.get_node_content_lines(node_id)
+            db_content_lines = db.get_node_content_lines(node_id, temporary)
         except KeyNotFoundError:
             pass
         else:

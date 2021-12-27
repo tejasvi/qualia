@@ -27,7 +27,7 @@ def backup_db() -> None:
         Path(stale_backup_file).unlink()
     with ZipFile(_DB_FOLDER.joinpath(now.isoformat().replace(":", ";") + backup_file_suffix), compresslevel=9,
                  compression=ZIP_DEFLATED, mode='x') as backup_zip:
-        backup_zip.write(_DB_FOLDER.joinpath('data.mdb'))
+        backup_zip.write(_DB_FOLDER.joinpath('data.mdb'), 'data.mdb')
 
 
 def removesuffix(input_string: str, suffix: str) -> str:

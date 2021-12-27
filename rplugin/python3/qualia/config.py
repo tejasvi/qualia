@@ -1,3 +1,4 @@
+from enum import Enum
 from os import environ
 from pathlib import Path
 
@@ -26,7 +27,7 @@ GIT_BRANCH = "main"
 
 NEST_LEVEL_SPACES = 4
 
-DEBUG = False
+DEBUG = True
 ATTACH_PYCHARM = True
 NVIM_DEBUG_PIPE = r'\\.\pipe\nvim-15600-0'  # E.g. nvim --listen \\.\pipe\nvim-15600-0 test.md
 
@@ -57,7 +58,7 @@ if DEBUG:
     QUALIA_CONFIG_DIR += '_debug'
 
 if not OVERRIDE_ADVANCED_SETTINGS:
-    _SHORT_BUFFER_ID = True  # not DEBUG
+    _SHORT_ID = True  # not DEBUG
     _SORT_SIBLINGS = False
 
     _EXPANDED_BULLET = '-'
@@ -85,16 +86,22 @@ if not OVERRIDE_ADVANCED_SETTINGS:
     _LOG_FILENAME = _LOG_FOLDER.joinpath('logs.txt').resolve()
 
     # Before starting resets data in QUALIA_DATA_DIR (DEBUG adds '_debug' to the path by default)
-    _RESET_APP_FOLDER = False
+    _RESET_APP_FOLDER = True
 
     for _path in (_FILE_FOLDER, _GIT_FOLDER, _DB_FOLDER, _LOG_FOLDER):
         if _RESET_APP_FOLDER:
             force_remove_directory(_path)
         create_directory_if_absent(_path)
 
-    _ROOT_ID_KEY = "root_id"
-    _CLIENT_KEY = "client"
-    _DB_ENCRYPTION_ENABLED_KEY = "encryption_enabled"
+    class DbMetaKey(Enum):
+        ROOT_ID_KEY = "root_id"
+        SOURCE_ID_KEY = "client_id"
+        SOURCE_NAME_KEY = "source_name"
+        CLIENT_KEY = "client"
+        DB_ENCRYPTION_ENABLED_KEY = "encryption_enabled"
+        REALTIME_ENCRYPTION_KEY = "realtime_encryption_key"
+        PRIVATE_KEY = "private_key"
+        ENCRYPTION_SALT = "encryption_salt"
 
     _LOGGER_NAME = "qualia"
     _BACKUP_COUNT = 10

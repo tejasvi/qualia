@@ -9,6 +9,7 @@ lmdb
 
 orderedset
 cryptography
+PyNaCl
 base65536
 bloomfilter-py
 

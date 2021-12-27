@@ -81,7 +81,7 @@ if argv[-1].endswith("qualia") or argv[-1].endswith("__init__.py"):
         raise
 
 """
-http://ix.io/3xdL"
-https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type"
+http://ix.io/3xdL
+https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type
 https://cryptography.io/en/latest/fernet/#implementation
 """

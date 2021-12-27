@@ -4,16 +4,14 @@ from pathlib import Path
 from re import search
 from signal import getsignal, SIGTERM, SIG_DFL, signal, Signals
 from tempfile import gettempdir
-from time import sleep
 from types import FrameType
 from typing import Iterable, cast
 
 from orderedset import OrderedSet
 
-from qualia.config import GIT_SEARCH_URL, _GIT_DATA_FOLDER, GIT_BRANCH, _SORT_SIBLINGS, _GIT_FOLDER
-from qualia.database import Database
-from qualia.models import NodeId, El, Li, InvalidFileChildrenLine
-from qualia.utils.common_utils import cd_run_git_cmd, live_logger, open_write_lf, decrypt_lines, encrypt_lines
+from qualia.config import GIT_SEARCH_URL, _GIT_DATA_FOLDER, GIT_BRANCH, _SORT_SIBLINGS
+from qualia.models import NodeId, El, Li, InvalidFileChildrenLine, MinimalDb
+from qualia.utils.common_utils import cd_run_git_cmd, open_write_lf, decrypt_lines, encrypt_lines, acquire_process_lock
 
 _CONTENT_CHILDREN_SEPARATOR_LINES = ["<hr>", ""]
 
@@ -48,7 +46,7 @@ def symlinks_enabled() -> bool:
     return True
 
 
-def create_markdown_file(db: Database, node_id: NodeId, repository_encrypted: bool) -> None:
+def create_markdown_file(db: MinimalDb, node_id: NodeId, repository_encrypted: bool) -> None:
     """
     CONTENT
     CONTENT ...
@@ -57,13 +55,13 @@ def create_markdown_file(db: Database, node_id: NodeId, repository_encrypted: bo
     Line containing child's "<UUID>.md"
     Line containing child's "<UUID>.md" ...
     """
-    content_lines = db.get_node_content_lines(node_id)
+    content_lines = db.get_node_content_lines(node_id, temporary)
     markdown_file_lines = encrypt_lines(content_lines) if repository_encrypted else content_lines
-    valid_node_children_ids = db.get_node_descendants(node_id, False, True)
+    valid_node_children_ids = db.get_node_descendants(node_id, False, True, temporary)
     markdown_file_lines.append(f"<hr><ol start=0><li><a href='{GIT_SEARCH_URL + node_id}+md'>Backlinks</a></li></ol>)")
     markdown_file_lines.append("")
     for i, child_id in enumerate(sorted(valid_node_children_ids) if _SORT_SIBLINGS else valid_node_children_ids):
-        markdown_file_lines.append(f"{i+1}. [`{child_id}`]({child_id}.md)")
+        markdown_file_lines.append(f"{i + 1}. [`{child_id}`]({child_id}.md)")
     open_write_lf(node_git_filepath(node_id), False, markdown_file_lines)
 
 
@@ -104,33 +102,27 @@ class GitInit:
     if getsignal(SIGTERM) == SIG_DFL:
         signal(SIGTERM, sigterm_handler)  # Signal handler (for pid) must be set from main thread
 
+    def __init__(self, git_root_dir: Path):
+        self.git_root_dir = git_root_dir
+
     def __enter__(self) -> None:
-        from pid import PidFile, PidFileAlreadyLockedError  # 0.06s
-        self.process_lock = PidFile(pidname="qualia_lock", piddir=_GIT_FOLDER.joinpath(".git"),
-                                    register_term_signal_handler=False)  # Can't register handler in non-main thread
-        retry_count = 10
-        for try_num in range(retry_count + 1):
-            try:
-                self.process_lock.__enter__()
-                break
-            except PidFileAlreadyLockedError as e:
-                if try_num == retry_count:
-                    live_logger.critical("Git sync failed due to failed lock acquisition.")
-                    raise e
-                sleep(5)
-        existing_branch = cd_run_git_cmd(["branch", "--show-current"])
+        git_root_dir = self.git_root_dir
+
+        self.acquired_process_lock = acquire_process_lock("qualia.lock", git_root_dir.joinpath(".git"), 10, 5)
+
+        existing_branch = cd_run_git_cmd(["branch", "--show-current"], git_root_dir)
         if existing_branch == GIT_BRANCH:
             self.different_existing_branch = None
         else:
             self.different_existing_branch = existing_branch
-            cd_run_git_cmd(["stash"])
-            cd_run_git_cmd(["switch", "-c", GIT_BRANCH])
+            cd_run_git_cmd(["stash"], git_root_dir)
+            cd_run_git_cmd(["switch", "-c", GIT_BRANCH], git_root_dir)
 
     def __exit__(self, *_args) -> None:
         if self.different_existing_branch:
-            cd_run_git_cmd(["checkout", self.different_existing_branch])
-            cd_run_git_cmd(["stash", "pop"])
-        self.process_lock.__exit__()
+            cd_run_git_cmd(["checkout", self.different_existing_branch], self.git_root_dir)
+            cd_run_git_cmd(["stash", "pop"], self.git_root_dir)
+        self.acquired_process_lock.__exit__()
 
 
 class LockNotAcquired(Exception):

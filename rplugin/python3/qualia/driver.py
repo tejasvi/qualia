@@ -7,7 +7,7 @@ from typing import Optional, cast, TYPE_CHECKING
 
 from qualia.config import DEBUG
 from qualia.database import Database
-from qualia.models import View, DuplicateNodeException, UncertainNodeChildrenException, Li
+from qualia.models import View, DuplicateNodeException, UncertainNodeChildrenException, Li, MutableDb
 from qualia.render import render
 from qualia.services.git import sync_with_git
 from qualia.services.realtime import Realtime
@@ -29,22 +29,23 @@ class PluginDriver(PluginUtils):
         self.sync_render_lock = Lock()
         self.git_sync_event = get_task_firing_event(lambda: sync_with_git(nvim), 1)  # 15)
 
-    def main(self, root_view: Optional[View], fold_level: Optional[int]) -> None:
+    def main(self, main_view: Optional[View], fold_level: Optional[int]) -> None:
         t0 = time()
         with self.sync_render_lock:
             current_buffer: Buffer = self.nvim.current.buffer
             current_buffer_id = self.current_buffer_id()
             if current_buffer_id is None:
                 return
+            try:
+                buffer_file_path = self.current_buffer_file_path()
+            except AssertionError:
+                return
 
             with Database() as db:
-                try:
-                    buffer_file_path = self.current_buffer_file_path()
-                except AssertionError:
-                    return
-                switched_buffer, transposed, main_id = (
-                    self.process_filepath(buffer_file_path, db) if root_view is None else self.process_view(root_view,
-                                                                                                            db))
+                if main_view is None:
+                    switched_buffer, main_view = self.process_filepath(buffer_file_path, db)
+                else:
+                    switched_buffer = self.process_view(main_view, db)
                 if switched_buffer:
                     return
 
@@ -55,21 +56,21 @@ class PluginDriver(PluginUtils):
 
                 while True:
                     try:
-                        if root_view:
-                            db.set_node_view(root_view, self.file_path_transposed(self.current_buffer_file_path()))
-                        else:
-                            while True:
-                                try:
-                                    buffer_lines = cast(Li, list(current_buffer))
-                                    root_view = sync_buffer(buffer_lines, main_id, last_sync, db, transposed,
-                                                            self.realtime_session, self.git_sync_event)
-                                    break
-                                except RecursionError:
-                                    if self.nvim.funcs.confirm("Too many nodes may lead to crash on slow hardware.",
-                                                               "&Pause parsing\n&Continue", 1) == 1:
-                                        self.enabled = False
-                                        return
-                                    setrecursionlimit(getrecursionlimit() * 2)
+                        if isinstance(db, MutableDb):
+                            if main_view:
+                                db.set_node_view(main_view)
+                            else:
+                                while True:
+                                    try:
+                                        buffer_lines = cast(Li, list(current_buffer))
+                                        main_view = sync_buffer(buffer_lines, main_view.main_id, last_sync, db, main_view.transposed, self.realtime_session, self.git_sync_event)
+                                        break
+                                    except RecursionError:
+                                        if self.nvim.funcs.confirm("Too many nodes may lead to crash on slow hardware.",
+                                                                   "&Pause parsing\n&Continue", 1) == 1:
+                                            self.enabled = False
+                                            return
+                                        setrecursionlimit(getrecursionlimit() * 2)
                     except DuplicateNodeException as exp:
                         self.handle_duplicate_node(current_buffer, exp)
                     except UncertainNodeChildrenException as exp:
@@ -79,8 +80,7 @@ class PluginDriver(PluginUtils):
                         t2 = time()
                         del2 = t2 - t1
                         self.delete_highlights(current_buffer.number)
-                        self.buffer_last_sync[current_buffer_id] = render(root_view, current_buffer, self.nvim, db,
-                                                                  transposed, fold_level)
+                        self.buffer_last_sync[current_buffer_id] = render(main_view, current_buffer, self.nvim, db, fold_level)
                         print(f"Rendered at {time()}s")
 
                         total = time() - t0

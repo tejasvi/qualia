@@ -39,8 +39,8 @@ endfun
 " https://github.com/ian-r-rose/binder-workspace-demo
 
 if !(exists('g:qualia_no_keymap') && g:qualia_no_keymap)
-    nnoremap <LeftMouse> <LeftMouse>:call <SID>MoveCursorConcealOffset()\|echo ''<CR>
-    inoremap <LeftMouse> <Esc><LeftMouse>:echo 'Normal Mode'<CR>
+    autocmd BufEnter *.q.md nnoremap <buffer> <LeftMouse> <LeftMouse>:call <SID>MoveCursorConcealOffset()\|echo ''<CR>
+    autocmd BufEnter *.q.md inoremap <buffer> <LeftMouse> <Esc><LeftMouse>:echo 'Normal Mode'<CR>
 
     if !exists('g:qualia_prefix_key')
         let g:qualia_prefix_key='<Leader>'

@@ -8,6 +8,7 @@ from json import dumps
 from logging import getLogger
 from math import ceil
 from os import PathLike
+from pathlib import Path
 from re import split
 from subprocess import run, CalledProcessError
 from threading import Thread
@@ -16,20 +17,22 @@ from traceback import format_exception
 from typing import Union, cast, Iterable, Callable, TYPE_CHECKING, Optional
 from uuid import UUID, uuid4
 
+from pid import PidFile
+
 from qualia.config import _LOGGER_NAME, _TRANSPOSED_FILE_PREFIX, \
     _CONFLICT_MARKER, _ENCRYPTION_KEY_FILE, _ENCRYPTION_USED, _SHORT_ID_STORE_BYTES, DEBUG, _GIT_FOLDER
-from qualia.models import NodeId, CustomCalledProcessError, El, Li, ShortId, KeyNotFoundError
+from qualia.models import NodeId, CustomCalledProcessError, El, Li, NodeShortId, KeyNotFoundError, SourceShortId, ShortId, FullId
 from qualia.services.backup import removesuffix
 
 if TYPE_CHECKING:
     from pynvim import Nvim
 
 
-def get_time_uuid() -> NodeId:
+def get_time_uuid() -> FullId:
     from secrets import token_bytes
     left_padded_time = (time_ns() // 10 ** 6).to_bytes(6, "big")
     id_bytes = left_padded_time + token_bytes(10)
-    return cast(NodeId, str(UUID(bytes=id_bytes)))
+    return cast(FullId, str(UUID(bytes=id_bytes)))
 
 
 def conflict(new_lines: Li, old_lines: Li) -> Li:
@@ -61,7 +64,7 @@ def _splitlines_conflict_marker(new_lines: Li) -> list[Li]:
     return cast(list[Li], splitted_lines_list)
 
 
-def file_name_to_file_id(full_name: str, extension: str) -> str:
+def get_id_in_file_name(full_name: str, extension: str) -> str:
     if full_name.endswith(extension):
         file_id = removesuffix(removeprefix(full_name, _TRANSPOSED_FILE_PREFIX), extension)
         return file_id
@@ -72,9 +75,9 @@ def file_name_to_file_id(full_name: str, extension: str) -> str:
 # @line_profiler_pycharm.profile
 
 
-def cd_run_git_cmd(arguments: list[str]) -> str:
+def cd_run_git_cmd(arguments: list[str], cmd_dir: Path) -> str:
     try:
-        result = run(["git"] + arguments, check=True, cwd=_GIT_FOLDER, capture_output=True, text=True)
+        result = run(["git"] + arguments, check=True, cwd=cmd_dir, capture_output=True, text=True)
     except CalledProcessError as e:
         raise CustomCalledProcessError(e)
     stdout = f"{result.stdout}{result.stderr}".strip()
@@ -119,7 +122,7 @@ def children_data_hash(data: Iterable[NodeId]) -> str:
     return ordered_data_hash(sorted(data))
 
 
-def normalized_search_prefixes(string: str) -> set[str]:
+def normalized_search_prefixes(string: Union[str, Li]) -> set[str]:
     return {word[:3].casefold() for word in split(r'(\W)', string) if word and not word.isspace()}
 
 
@@ -137,8 +140,8 @@ class StartLoggedThread(Thread):
         self.start()
 
 
-def get_uuid() -> NodeId:
-    return cast(NodeId, str(uuid4()))
+def get_uuid() -> FullId:
+    return cast(FullId, str(uuid4()))
 
 
 def open_write_lf(file_path: Union[str, bytes, PathLike], prevent_overwrite: bool, lines: list[str]) -> None:
@@ -161,14 +164,6 @@ else:
 
         _abstract_fernet = cast(Fernet, _abstract_fernet)
     fernet = _abstract_fernet
-
-
-def decrypt_lines(encrypted_lines: El) -> Li:
-    return cast(Li, fernet.decrypt(encrypted_lines[0].encode()).decode().split('\n'))
-
-
-def encrypt_lines(unencrypted_lines: Li) -> El:
-    return cast(El, [fernet.encrypt('\n'.join(unencrypted_lines).encode()).decode()])
 
 
 def trigger_buffer_change(nvim):
@@ -195,24 +190,25 @@ def compact_base32_encode(byte_string: bytes) -> str:
     return b32encode(byte_string).decode().rstrip("=").lstrip('A') or 'A'
 
 
-def compact_base64_decode(string: str) -> bytes:
-    # Base64 stores 6 bits per letter. 000000 is represented as 'A'
-    unpadded_length = ceil(_SHORT_ID_STORE_BYTES * 8 / 6)
-    padding = 2  # Extra '=' padding is ignored
-    byte_string = b64decode(_decompact_encoded_string(string, unpadded_length, padding), validate=True)
-    return byte_string
+# Case sensitivity unsuitable for Windows/WSL
+# def compact_base64_decode(string: str) -> bytes:
+#     # Base64 stores 6 bits per letter. 000000 is represented as 'A'
+#     unpadded_length = ceil(_SHORT_ID_STORE_BYTES * 8 / 6)
+#     padding = 2  # Extra '=' padding is ignored
+#     byte_string = b64decode(_decompact_encoded_string(string, unpadded_length, padding), validate=True)
+#     return byte_string
+#
+#
+# def compact_base64_encode(byte_string: bytes) -> str:
+#     return b64encode(byte_string).decode().rstrip("=").lstrip('A') or 'A'
 
 
-def compact_base64_encode(byte_string: bytes) -> str:
-    return b64encode(byte_string).decode().rstrip("=").lstrip('A') or 'A'
-
-
-def buffer_id_decoder(buffer_id: ShortId) -> bytes:
+def short_id_decoder(buffer_id: ShortId) -> bytes:
     return compact_base32_decode(buffer_id)
 
 
-def buffer_id_encoder(buffer_id_bytes: bytes) -> ShortId:
-    return cast(ShortId, compact_base32_encode(buffer_id_bytes))
+def short_id_encoder(short_id_bytes: bytes) -> ShortId:
+    return cast(NodeShortId, compact_base32_encode(short_id_bytes))
 
 
 absent_node_content_lines = cast(Li, [''])
@@ -225,10 +221,27 @@ def removeprefix(input_string: str, suffix: str) -> str:
     return input_string
 
 
-class InvalidBufferNodeIdError(KeyNotFoundError):
-    def __init__(self, buffer_node_id: ShortId):
-        live_logger.critical(f'Invalid buffer node ID: "{buffer_node_id}"'
-                             + '. Modified hidden node ID by any chance?')
-        super().__init__(buffer_node_id)
+class InvalidShortIdError(KeyNotFoundError):
+    def __init__(self, short_id: ShortId):
+        live_logger.critical(f'Invalid short ID: "{short_id}"'
+                             + '. Modified concealed short ID by any chance?')
+        super().__init__(short_id)
+
 
 counter = itertools.count()
+
+
+def acquire_process_lock(filename: str, file_directory: Path, retry_count: int, retry_delay: float) -> PidFile:
+    from pid import PidFile, PidFileAlreadyLockedError  # 0.06s
+    process_lock = PidFile(pidname=filename, piddir=file_directory.joinpath(".git"),
+                           register_term_signal_handler=False)  # Can't register handler in non-main thread
+    for try_num in range(retry_count + 1):
+        try:
+            process_lock.__enter__()
+            break
+        except PidFileAlreadyLockedError:
+            if try_num == retry_count:
+                live_logger.critical("Git sync failed due to failed lock acquisition.")
+                raise Exception
+            sleep(retry_delay)
+    return process_lock

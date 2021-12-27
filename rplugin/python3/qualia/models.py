@@ -3,22 +3,35 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections import UserDict
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from subprocess import CalledProcessError
-from typing import NewType, Union, Optional, Tuple, Dict, MutableMapping, List, Callable
+from threading import Event
+from typing import NewType, Union, Optional, Tuple, Dict, MutableMapping, List, Callable, Container, Iterable, TYPE_CHECKING
 
 from lmdb import Cursor
 from orderedset import OrderedSet
 from typing_extensions import TypedDict
 
-from qualia.config import _ENCRYPTION_USED
+from qualia.config import _ENCRYPTION_USED, _GIT_FOLDER, _SHORT_ID, _DB_FOLDER
+
+if TYPE_CHECKING:
+    from qualia.database import MaDatabase
 
 StringifiedChildren = NewType("StringifiedChildren", str)
 StringifiedContent = NewType("StringifiedContent", str)
-NodeId = NewType("NodeId", str)
+
 BufferId = Tuple[int, str]
-FileId = NewType("FileId", str)
-ShortId = NewType("ShortId", str)
+
+NodeId = NewType("NodeId", str)
+NodeShortId = NewType("NodeShortId", str)
+
+SourceId = NewType("SourceId", str)
+SourceShortId = NewType("SourceShortId", str)
+
+ShortId = Union[NodeShortId, SourceShortId]
+FullId = Union[NodeId, SourceId]
+
 Tree = dict[NodeId, Optional[dict]]
 LineRange = Tuple[int, int]
 AstMap = Tuple[int, int]
@@ -27,15 +40,11 @@ Li = NewType("Li", list[str])
 ListenerRequest = tuple[str, list, dict[str, object]]
 
 
-class DbClient(TypedDict):
-    client_id: str
-    client_name: str
-
-
 @dataclass
 class View:
     main_id: NodeId
-    sub_tree: Optional[Tree]
+    source_id: SourceId
+    sub_tree: Optional[Tree]  # None should indicate unknown
     transposed: bool
 
 
@@ -89,15 +98,16 @@ class GitMergeError(CustomCalledProcessError):
 
 
 class LastSync(UserDict, MutableMapping[NodeId, NodeData]):
-    def __init__(self, source_directory: Optional[Path]) -> None:
+    def __init__(self, source_id: SourceId) -> None:
         super().__init__()
         self.data: Dict[NodeId, NodeData] = {}
         self.line_info: Dict[int, LineInfo] = {}
-        self.source_directory = source_directory
+        self.source_id = source_id
 
     def __clear__(self) -> None:
         self.data.clear()
         self.line_info.clear()
+        self.source_id = None
 
     def pop_data(self, node_id: NodeId) -> None:
         self.data.pop(node_id)
@@ -117,41 +127,159 @@ class Cursors:
     unsynced_children: Cursor
     unsynced_views: Cursor
 
-    buffer_id_bytes_node_id: Cursor
-    node_id_buffer_id: Cursor
+    temp_content: Cursor
+    temp_children: Cursor
+    temp_parents: Cursor
 
-    metadata: Cursor
+    imported_node_id_source_id: Cursor
 
     bloom_filters: Cursor
 
     parents: Cursor
     transposed_views: Cursor
 
+    metadata: Cursor
+
+
+@dataclass
+class QCursors:
+    short_id_bytes_node_id: Cursor
+    node_id_short_id: Cursor
+
+    short_id_bytes_source_id: Cursor
+    source_id_short_id: Cursor
+
+    source_id_info: Cursor
+
+    metadata: Cursor
+
 
 class MinimalDb(ABC):
     """For supporting alternative data sources in future (e.g. git repo)"""
-    @abstractmethod
-    def __init__(self, _source_location: str):
+
+    def __init__(self, _source_location: str, _password_callback: Callable[[], str])->None:
+        self.main_db: Optional[MaDatabase] = None
+
+    def __enter__(self) -> MinimalDb:
+        pass
+
+    def __exit__(self, *_) -> None:
         pass
 
     @abstractmethod
-    def get_node_descendants(self, node_id: NodeId, transposed: bool, discard_invalid: bool) -> OrderedSet[NodeId]:
+    def get_node_descendants(self, node_id: NodeId, transposed: bool, discard_invalid: bool, temporary) -> OrderedSet[NodeId]:
+        """If parent info is not available in O(1), return empty data instead. Parent data is not assumed to be reliable
+        :param temporary:
+        """
         pass
 
     @abstractmethod
-    def get_node_content_lines(self, node_id: NodeId) -> Li:
+    def get_node_content_lines(self, node_id: NodeId, temporary) -> Li:
         pass
 
     @abstractmethod
-    def node_to_buffer_id(self, node_id: NodeId) -> ShortId:
-        pass
-
-    @abstractmethod
-    def buffer_id_bytes_to_node_id(self, buffer_id_bytes) -> NodeId:
+    def db_encrypted(self) -> bool:
         pass
 
     @abstractmethod
     def get_root_id(self) -> NodeId:
+        pass
+
+    @abstractmethod
+    def set_root_id(self, root_id: NodeId) -> None:
+        pass
+
+    @abstractmethod
+    def set_source_id(self, source_id: SourceId, main_db: MaDatabase) -> None:
+        pass
+
+    @abstractmethod
+    def get_set_source_id(self, main_db: MaDatabase) -> SourceId:
+        pass
+
+    @abstractmethod
+    def get_set_source_name(self) -> str:
+        pass
+
+    @abstractmethod
+    def set_source_name(self, source_name: str) -> None:
+        pass
+
+    @abstractmethod
+    def get_node_ids(self, temporary) -> list[NodeId]:
+        pass
+
+    @abstractmethod
+    def get_set_keywords(self, node_id) -> Container:
+        pass
+
+    @abstractmethod
+    def is_valid_node(self, node_id: NodeId) -> bool:
+        pass
+
+
+class MutableDb(MinimalDb, ABC):
+    @abstractmethod
+    def bootstrap(self) -> None:
+        pass
+
+    @abstractmethod
+    def set_node_descendants(self, node_id: NodeId, descendant_ids: OrderedSet[NodeId], transposed: bool):
+        pass
+
+    @abstractmethod
+    def set_node_view(self, view: View) -> None:
+        pass
+
+    @abstractmethod
+    def delete_node(self, node_id: NodeId) -> None:
+        pass
+
+    @abstractmethod
+    def set_node_content_lines(self, node_id: NodeId, content_lines: Li, ) -> None:
+        pass
+
+    @abstractmethod
+    def children_hash(self, node_id: NodeId) -> str:
+        pass
+
+    @abstractmethod
+    def get_node_view(self, node_id: NodeId, transposed: bool, main_db: "MaDatabase") -> View:
+        pass
+
+
+class SyncableDb(MutableDb, ABC):
+    def __init__(self, _source_location: str, _password_callback: Callable[[], str]) -> None:
+        super().__init__()
+        self.git_repository_data_subpath: Path = Path("data")
+        self.repository_setup = Event()
+        self.bootstrap()
+
+    def git_repository_dir(self, main_db: MaDatabase)->Path:
+        source_id = self.get_set_source_id()
+        return _GIT_FOLDER.joinpath(main_db.full_to_short_id(source_id, False) if _SHORT_ID else source_id)
+
+    def git_repository_data_dir(self, main_db: MaDatabase)->Path:
+        return self.git_repository_dir(main_db).joinpath("data")
+
+    @abstractmethod
+    def delete_unsynced_content_children(self, node_id: NodeId) -> None:
+        pass
+
+    @abstractmethod
+    def if_unsynced_children(self, node_id: NodeId) -> bool:
+        pass
+
+    @abstractmethod
+    def if_unsynced_content(self, node_id: NodeId) -> bool:
+        pass
+
+    @abstractmethod
+    def pop_unsynced_node_ids(self) -> Iterable[NodeId]:
+        pass
+
+    @abstractmethod
+    def needs_first_use_password(self) -> bool:
         pass
 
 
@@ -206,3 +334,7 @@ class InvalidNodeId:
 
 class InvalidFileChildrenLine(Exception):
     pass
+
+
+class DbType(Enum):
+    LMDB = "lmdb"

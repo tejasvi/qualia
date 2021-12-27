@@ -104,7 +104,7 @@ class Realtime(RealtimeUtils):
         broadcast_conflicts: RealtimeBroadcastPacket = {}
 
         with Database() as db:
-            # Process content before to avoid discarding new children
+            # Process content before to avoid discarding new children as empty
             content_conflicts = None
             if CONTENT_KEY in value:
                 try:
