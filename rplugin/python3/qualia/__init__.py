@@ -13,7 +13,7 @@ from qualia.config import _ENCRYPTION_USED
 #
 # install_import_hook('qualia')
 
-if True or DEBUG and ATTACH_PYCHARM:
+if DEBUG and ATTACH_PYCHARM:
     # https://www.jetbrains.com/help/pycharm/remote-debugging-with-product.html#remote-debug-config
     try:
         import pydevd_pycharm
