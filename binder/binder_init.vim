@@ -65,7 +65,7 @@ endfunction
 set foldtext=Fold()
 
 set fillchars=eob:ॱ
-set virtualedit=v
+set virtualedit='v'
 autocmd BufEnter,FocusGained,CursorHold,FileWritePre,BufWritePre * checktime "reload file
 autocmd BufEnter * let &ruler=&filetype==#'markdown' ? 0 : 1 | let &showmode=&ruler
 autocmd CmdlineLeave *.md : echo ''
@@ -73,8 +73,6 @@ nnoremap <silent>co :set <C-R>=&conceallevel ? 'conceallevel=0' : 'conceallevel=
 
 set mouse=a
 set mousemodel=popup_setpos
-inoremap <2-LeftMouse> <Esc>:echo 'Shortcut Mode'
-nnoremap <2-LeftMouse> :startinsert<cr>
 
 filetype plugin indent on
 set autoindent
