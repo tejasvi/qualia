@@ -6,8 +6,8 @@ from bloomfilter.bloomfilter_strategy import MURMUR128_MITZ_32
 from orderedset import OrderedSet
 
 from qualia.config import ENCRYPT_DB, _ROOT_ID_KEY, _DB_ENCRYPTION_ENABLED_KEY, _CLIENT_KEY, \
-    _SHORT_ID_STORE_BYTES, _SOURCE_ID_KEY
-from qualia.models import NodeId, El, Li, View, Tree, DbClient, ShortId, MinimalDb, SourceId
+    _SHORT_ID_STORE_BYTES
+from qualia.models import NodeId, El, Li, View, Tree, DbClient, ShortId, MinimalDb
 from qualia.utils.common_utils import decrypt_lines, encrypt_lines, get_uuid, children_data_hash, \
     fernet, normalized_search_prefixes, buffer_id_encoder
 from qualia.utils.database_utils import LMDB

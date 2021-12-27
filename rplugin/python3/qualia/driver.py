@@ -89,10 +89,10 @@ class PluginDriver(PluginUtils):
                                 "Took: " + ' '.join([str(round(n, 3)) for n in (total, del1, del2, time() - t2)]))
                     break
 
-            self.nvim.command("silent set write | silent update")
+            # Might give OSError while debugging with Pycharm
+            self.changedtick[current_buffer_id] = self.nvim.command_output("silent set write | silent update | echo b:changedtick")
             # self.nvim.command(
             #     "echom 'modified' getbufinfo(bufnr())[0].changed bufname() getbufline(bufnr(), 1, '$') b:changedtick | silent set write | silent update")
-            self.changedtick[current_buffer_id] = self.nvim.eval("b:changedtick")
 
     def trigger_sync(self, force: bool) -> None:
         live_logger.debug(f"Trigger {time()}")

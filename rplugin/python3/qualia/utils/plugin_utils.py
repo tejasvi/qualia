@@ -12,7 +12,7 @@ from qualia.config import NVIM_DEBUG_PIPE, _FZF_LINE_DELIMITER, _TRANSPOSED_FILE
 from qualia.config import _FILE_FOLDER
 from qualia.database import Database
 from qualia.models import NodeId, DuplicateNodeException, UncertainNodeChildrenException, View, BufferId, LastSync, \
-    LineInfo, KeyNotFoundError, FileId, MinimalDb, SourceId
+    LineInfo, KeyNotFoundError, FileId, MinimalDb
 from qualia.utils.buffer_utils import buffer_to_node_id
 from qualia.utils.common_utils import live_logger, exception_traceback, file_name_to_file_id, buffer_id_decoder, \
     buffer_id_encoder, compact_base32_encode, compact_base32_decode
@@ -30,7 +30,7 @@ class PluginUtils:
 
         self.changedtick: dict[BufferId, int] = defaultdict(lambda: -1)
         self.undo_seq: dict[BufferId, int] = {}
-        self.buffer_last_sync: dict[BufferId, LastSync] = defaultdict(LastSync)
+        self.buffer_last_sync: dict[BufferId, LastSync] = defaultdict(lambda: LastSync(None))
         self.last_git_sync = 0.
         self.enabled: bool = True
 
