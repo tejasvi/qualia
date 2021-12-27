@@ -16,7 +16,7 @@
 
 # Quick start
 
-1. [Run in browser](https://mybinder.org/v2/gh/tejasvi/qualia/)
+1. [Run in browser](https://mybinder.org/v2/gh/tejasvi/qualia/master)
     * Uses [recommended config](binder/binder_init.vim) for best experience.
     * It may take a couple of minutes to load if not used by someone recently.
     * After startup click on <kbd>Terminal</kbd> in the middle.
