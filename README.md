@@ -82,44 +82,49 @@ To add a child node, create a list item. To duplicate a node, copy and paste the
 
 <hr>
 <details><summary><b> Comparison with existing tools</b></summary>
-    <h4>Vimflowy</h4>
+<h4>Vimflowy</h4>
 <ul>
-    <li>Limited markdown syntax.</li>
-    <li>Node can not be simultaneously expanded and collapsed at different locations.</li>
-    <li>Ancestor node can not be added as a descendant.</li>
-    <li>Does not support multi-line content in a node.</li>
-    <li>Limited node graph manipulation capabilities.</li>
-    <li>No E2E encryption during sync.</li>
-    <li>Vim _emulation_ vs Vim.</li>
+<li>Limited markdown syntax.</li>
+<li>Node can not be simultaneously expanded and collapsed at different locations.</li>
+<li>Ancestor node can not be added as a descendant.</li>
+<li>Does not support multi-line content in a node.</li>
+<li>Limited node graph manipulation capabilities.</li>
+<li>No E2E encryption during sync.</li>
+<li>Vim _emulation_ vs Vim.</li>
 
- </ul>
-   <h4>Workflowy</h4><ul>
+</ul>
+<h4>Workflowy</h4>
+<ul>
 
-    <li>Not markdown.</li>
-    <li>Not keyboard-centric.</li>
-    <li>Paid and closed-source.</li>
-    <li>Data loss possible during sync conflict resolution.</li>
-    <li>Limited node graph manipulation capabilities.</li>
-    <li>Multi-line notes are second-class.</li>
-    <li>No E2E encryption during sync.</li>
+<li>Not markdown.</li>
+<li>Not keyboard-centric.</li>
+<li>Paid and closed-source.</li>
+<li>Data loss possible during sync conflict resolution.</li>
+<li>Limited node graph manipulation capabilities.</li>
+<li>Multi-line notes are second-class.</li>
+<li>No E2E encryption during sync.</li>
 
-    </ul><h4>Roam Research</h4><ul>
+</ul>
+<h4>Roam Research</h4>
+<ul>
 
-    <li>Paid and closed-source.</li>
-    <li>Not markdown.</li>
-    <li>Not key-board centric.</li>
-    <li>Limited node graph manipulation capabilities.</li>
-    <li>Extremely slow UI.</li>
-    <li>No E2E encryption during sync.</li>
-    <li>Data loss possible during sync conflict resolution.</li>
+<li>Paid and closed-source.</li>
+<li>Not markdown.</li>
+<li>Not key-board centric.</li>
+<li>Limited node graph manipulation capabilities.</li>
+<li>Extremely slow UI.</li>
+<li>No E2E encryption during sync.</li>
+<li>Data loss possible during sync conflict resolution.</li>
 
-    </ul><h4>Obsidian</h4><ul>
+</ul>
+<h4>Obsidian</h4>
+<ul>
 
-    <li>Closed-source.</li>
-    <li>Transclusion only in preview mode.</li>
-    <li>Not keyboard-centric.</li>
-    <li>UX suitable only for multi-line notes.</li>
-    <li>Limited node graph manipulation capabilities.</li>
+<li>Closed-source.</li>
+<li>Transclusion only in preview mode.</li>
+<li>Not keyboard-centric.</li>
+<li>UX suitable only for multi-line notes.</li>
+<li>Limited node graph manipulation capabilities.</li>
 
-    </ul>
+</ul>
 </details>
