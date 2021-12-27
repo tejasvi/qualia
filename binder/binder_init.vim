@@ -65,7 +65,7 @@ endfunction
 set foldtext=Fold()
 
 set fillchars=eob:ॱ
-set virtualedit=visual
+set virtualedit=v
 autocmd BufEnter,FocusGained,CursorHold,FileWritePre,BufWritePre * checktime "reload file
 autocmd BufEnter * let &ruler=&filetype==#'markdown' ? 0 : 1 | let &showmode=&ruler
 autocmd CmdlineLeave *.md : echo ''
